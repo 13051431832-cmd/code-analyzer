@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: code_analyzer
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: code_analyzer_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U code_analyzer -d code_analyzer_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+      - /Users/jason/Downloads:/host_downloads:ro
+      - /Users/jason/king_analysis:/king_analysis
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://code_analyzer:password@postgres:5432/code_analyzer_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: celery -A api.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+      - /Users/jason/Downloads:/host_downloads:ro
+      - /Users/jason/king_analysis:/king_analysis
+    environment:
+      DATABASE_URL: postgresql://code_analyzer:password@postgres:5432/code_analyzer_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - api
+      - redis
+
+  web:
+    image: node:18
+    working_dir: /app
+    command: sh -c "npm install && BROWSER=none HOST=0.0.0.0 npm start"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL=http://localhost:8000   # 让前端代码知道后端地址
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

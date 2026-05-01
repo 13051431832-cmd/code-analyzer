@@ -1,0 +1,32 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    python3-dev \
+    libpq-dev \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制并安装 Python 依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制应用代码
+COPY api/ ./api/
+
+# 设置 Python 路径
+ENV PYTHONPATH=/app
+
+# 健康检查（可选）
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD celery -A api.celery_app inspect ping || exit 1
+
+# 启动 Celery Worker
+# 使用 api.celery_app 而不是 api.tasks
+CMD ["celery", "-A", "api.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

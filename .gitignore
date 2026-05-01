@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Node.js
+node_modules/
+frontend/build/
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temp / Cache
+.pytest_cache/
+temp/
+*.zip
+
+# External projects (not part of this repo)
+llm_wiki-main/
+osint-assistant-main/
+scrapling-main/
+download/
+sync_to_sqlite.py
+
+# Docker
+.docker/
+
+# MCP local variant
+mcp-server-local/
