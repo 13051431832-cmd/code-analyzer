@@ -1,36 +1,34 @@
 
-# Code Analyzer MVP · 代码分析器
+# Code Analyzer MVP
 
-> **让 AI 理解你的代码库** — 自动分析 Git 仓库，提取结构化元数据，通过 MCP 协议让 Claude Code 直接搜索和理解代码。
->
 > **Make your codebase AI-readable** — Automatically analyze Git repos, extract structured metadata, and let Claude Code search & understand code through MCP.
 
 ---
 
-## 📋 Table of Contents 目录
+## 📋 Table of Contents
 
-- [🎯 Claude Code Integration Claude Code集成](#-claude-code-integration-claude-code集成)
-- [💻 Terminal CLI 终端命令行](#-terminal-cli-终端命令行)
-- [🌐 Web API 接口](#-web-api-接口)
-- [🖥️ Frontend UI 前端界面](#️-frontend-ui-前端界面)
-- [🎨 Three Analysis Modes 三种分析模式](#-three-analysis-modes-三种分析模式)
-- [📦 Batch Analysis 批量分析](#-batch-analysis-批量分析)
-- [🔌 Offline Mode 离线模式](#-offline-mode-离线模式)
-- [🔬 Code Parsing 代码解析](#-code-parsing-代码解析)
-- [🔍 Search System 搜索系统](#-search-system-搜索系统)
-- [📊 Relationship Graph 调用关系图](#-relationship-graph-调用关系图)
-- [🚀 Quick Start 快速开始](#-quick-start-快速开始)
-- [🏗 Architecture 架构](#-architecture-架构)
-- [📖 API Reference API参考](#-api-reference-api参考)
-- [⚙️ Configuration 配置](#️-configuration-配置)
-- [🧪 Testing 测试](#-testing-测试)
-- [📄 License 许可证](#-license-许可证)
+- [🎯 Claude Code Integration](#-claude-code-integration)
+- [💻 Terminal CLI](#-terminal-cli)
+- [🌐 Web API](#-web-api)
+- [🖥️ Frontend UI](#️-frontend-ui)
+- [🎨 Three Analysis Modes](#-three-analysis-modes)
+- [📦 Batch Analysis with Checkpoint Resume](#-batch-analysis-with-checkpoint-resume)
+- [🔌 Offline Mode](#-offline-mode)
+- [🔬 Code Parsing](#-code-parsing)
+- [🔍 Search System](#-search-system)
+- [📊 Relationship Graph](#-relationship-graph)
+- [🚀 Quick Start](#-quick-start)
+- [🏗 Architecture](#-architecture)
+- [📖 API Reference](#-api-reference)
+- [⚙️ Configuration](#️-configuration)
+- [🧪 Testing](#-testing)
+- [📄 License](#-license)
 
 ---
 
-## 🎯 Claude Code Integration Claude Code集成
+## 🎯 Claude Code Integration
 
-注册 MCP 服务器后，在任意 Claude Code 对话中直接搜索分析过的代码：
+Register the MCP server, then search analyzed code directly from any Claude Code conversation:
 
 ```json
 {
@@ -44,279 +42,277 @@
 }
 ```
 
-配置完成后，Claude Code 自动获得 **14 个代码搜索工具**：
+Once configured, Claude Code gains **14 code search tools** automatically:
 
-### 搜索工具
+### Search Tools
 
-| 工具 | 你在 Claude 中这样说 | 返回结果 |
-|------|---------------------|---------|
-| `ai_search` | "找到所有 rate limiting 相关函数" | 结构化元数据: purpose / inputs / outputs / side_effects |
-| `search_code` | "搜索 authentication 的实现" | 代码片段 + 详细解释 + 调用图统计 |
-| `search_classes` | "找到数据模型的类定义" | 类定义 + AI 解释 |
-| `search_grouped` | "按文件显示所有数据库查询" | 按文件/项目分组，理解跨文件实现 |
-| `get_reference` | "给个 JWT 认证的代码参考" | 紧凑的代码片段 |
+| Tool | Say this in Claude | Returns |
+|------|--------------------|---------|
+| `ai_search` | "Find all rate limiting related functions" | Structured metadata: purpose, inputs, outputs, side_effects |
+| `search_code` | "Search for authentication implementation" | Code snippets + explanations + call graph stats |
+| `search_classes` | "Find data model class definitions" | Class definitions + AI explanations |
+| `search_grouped` | "Show all database queries grouped by file" | Results grouped by file/project |
+| `get_reference` | "Give me a JWT auth code example" | Compact code snippets |
 
-### 函数分析工具
+### Function Analysis Tools
 
-| 工具 | 你在 Claude 中这样说 | 返回结果 |
-|------|---------------------|---------|
-| `get_ai_context` | "42 号函数怎么调用？" | 用途、入参类型、返回值、副作用 |
-| `get_function_detail` | "查看 42 号函数完整信息" | 函数全貌：文件路径、项目名、相关函数 |
-| `get_context` | "谁调用了 42？它调用了谁？" | 调用者列表 + 被调用者列表 + 代码预览 |
-| `get_ai_neighborhood` | "42 号函数在调用图中的位置" | 图结构：节点（签名/用途）+ 边 |
-| `get_impact` | "修改 42 会影响哪些地方？" | BFS 遍历上下游影响链 |
-| `get_file_functions` | "查看 app.py 里所有函数" | 文件内所有函数 + 签名 + 解释 |
-| `get_project_stats` | "这个数据库里有多少项目？" | 项目统计：文件数、函数数、覆盖率 |
+| Tool | Say this in Claude | Returns |
+|------|--------------------|---------|
+| `get_ai_context` | "How do I call function 42?" | Purpose, input types, return values, side effects |
+| `get_function_detail` | "Show full details for function 42" | Full profile: file path, project, related functions |
+| `get_context` | "Who calls function 42? What does it call?" | Callers list + callees list + code preview |
+| `get_ai_neighborhood` | "Where does function 42 fit in the call graph?" | Graph: nodes (signature/purpose) + edges |
+| `get_impact` | "What would be affected if I modify function 42?" | BFS traversal of upstream/downstream chain |
+| `get_file_functions` | "Show all functions in app.py" | All functions in file + signatures + explanations |
+| `get_project_stats` | "How many projects are in the database?" | Project stats: files, functions, coverage |
 
-### 典型工作流
+### Typical Workflow
 
 ```
-你: "找到用户认证相关的函数"
-  → Claude 调用 ai_search({query: "user authentication"})
-  → 返回 10 个匹配函数的元数据
+You: "Find user authentication related functions"
+  → Claude calls ai_search({query: "user authentication"})
+  → Returns 10 matching functions with structured metadata
 
-你: "解释一下 42 号函数怎么调用"
-  → Claude 调用 get_ai_context({function_id: 42})
-  → 返回入参类型、返回值、副作用、调用图统计
+You: "Explain how to call function 42"
+  → Claude calls get_ai_context({function_id: 42})
+  → Returns input types, return values, side effects, call graph stats
 
-你: "如果修改这个函数会影响谁？"
-  → Claude 调用 get_impact({function_id: 42, depth: 3, direction: "upstream"})
-  → 返回所有上游调用链（谁在用它）
+You: "Who would be affected if I modify this function?"
+  → Claude calls get_impact({function_id: 42, depth: 3, direction: "upstream"})
+  → Returns all upstream callers (who is using it)
 
-你: "重构前先看看这个函数怎么融入项目"
-  → Claude 调用 get_ai_neighborhood({function_id: 42, depth: 1})
-  → 返回函数 + 直接调用邻居
+You: "Show me how this function fits into the project before I refactor"
+  → Claude calls get_ai_neighborhood({function_id: 42, depth: 1})
+  → Returns function + immediate call graph neighbors
 ```
 
 ---
 
-## 💻 Terminal CLI 终端命令行
+## 💻 Terminal CLI
 
-无需启动浏览器，直接在终端中搜索和分析代码：
+Search and analyze code directly from your terminal:
 
 ```bash
-# 搜索函数实现
+# Search for function implementations
 ./ca.sh "rate limiting middleware" typescript 5
 
-# 函数详情
+# Function details
 ./ca.sh detail 42
 
-# 调用上下文（调用者 + 被调用者）
+# Call context (callers + callees)
 ./ca.sh context 42
 
-# 影响链分析（BFS 遍历）
+# Impact chain analysis (BFS traversal)
 ./ca.sh impact 42 3 upstream
 ```
 
-CLI 支持的操作：
+CLI commands:
 
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `search <query> [lang] [limit]` | 搜索函数实现 | `./ca.sh "rate limit" go 10` |
-| `detail <id>` | 函数完整详情 | `./ca.sh detail 42` |
-| `context <id>` | 调用上下文 | `./ca.sh context 42` |
-| `impact <id> [depth] [dir]` | 影响链分析 | `./ca.sh impact 42 3 upstream` |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `search <query> [lang] [limit]` | Search functions | `./ca.sh "rate limit" go 10` |
+| `detail <id>` | Full function detail | `./ca.sh detail 42` |
+| `context <id>` | Call context | `./ca.sh context 42` |
+| `impact <id> [depth] [dir]` | Impact chain | `./ca.sh impact 42 3 upstream` |
 
 ---
 
-## 🌐 Web API 接口
+## 🌐 Web API
 
-所有功能通过 REST API 暴露，支持任何 HTTP 客户端：
+All features are accessible via REST API from any HTTP client:
 
 ```bash
-# 提交分析任务
+# Submit an analysis task
 curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/user/repo.git"}'
 # → {"task_id": "abc123...", "status": "pending"}
 
-# 查询任务状态（含进度百分比和当前步骤）
+# Check task status (with progress percentage and current step)
 curl http://localhost:8000/api/analyze/abc123.../status
 # → {"status": "processing", "progress": 45, "current_step": "Parsing files"}
 
-# 列出所有已分析项目
+# List all analyzed projects
 curl http://localhost:8000/api/projects
-# → [{"id": 1, "name": "my-project", "language": "python", "analysis_mode": "ai", ...}]
 
-# AI 优化搜索（返回结构化元数据，专为 AI 消费优化）
+# AI-optimized search (structured metadata for AI consumption)
 curl "http://localhost:8000/api/ai/search?q=authentication&limit=5"
-# → {"results": [{"name": "authenticate", "ai": {"purpose": "...", "inputs": [...], ...}, ...}]}
 
-# 通用搜索（返回详细解释和代码片段）
+# General search (detailed explanations and code snippets)
 curl "http://localhost:8000/api/search?q=rate+limiting&language=typescript"
 
-# 函数上下文
+# Function context
 curl http://localhost:8000/api/ai/functions/42/context
 
-# 影响链分析
+# Impact chain analysis
 curl "http://localhost:8000/api/functions/42/impact?depth=3&direction=upstream"
 
-# 按文件分组搜索（理解跨文件实现）
+# Search grouped by file (understand multi-file implementations)
 curl "http://localhost:8000/api/search?q=crawler+pipeline&group_by=file"
 
-# 项目统计概览
+# Project statistics overview
 curl http://localhost:8000/api/projects/stats
 ```
 
 ---
 
-## 🖥️ Frontend UI 前端界面
+## 🖥️ Frontend UI
 
-React 前端提供图形化浏览界面，适合人类阅读分析结果：
+A React-based graphical interface for browsing analysis results:
 
 ```
 frontend/
 ├── public/index.html
 └── src/
-    ├── App.js              # 应用入口
-    ├── index.js            # 渲染入口
-    └── CodeLearningView.jsx  # 主界面：模式切换、代码展示、解释查看
+    ├── App.js              # Application entry
+    ├── index.js            # Render entry
+    └── CodeLearningView.jsx  # Main view: mode switching, code display, explanations
 ```
 
-启动后访问 `http://localhost:3000`，支持：
-- 项目列表浏览
-- 函数/类结构展示
-- 代码片段 + AI 解释对照查看
-- 三种分析模式切换查看
+Access at `http://localhost:3000` after startup. Supports:
+- Project list browsing
+- Function/class structure display
+- Side-by-side code + AI explanation view
+- Three analysis mode switching
 
 ---
 
-## 🎨 Three Analysis Modes 三种分析模式
+## 🎨 Three Analysis Modes
 
-同一份代码，三种视角。这是 Code Analyzer 的核心差异化功能。
+Same code, three perspectives. This is the core differentiator of Code Analyzer.
 
-| 模式 | 适用对象 | 生成内容 |
-|------|---------|---------|
-| `ai` **(默认)** | AI 代理、MCP 工具 | `purpose`, `inputs`(JSONB), `outputs`(JSONB), `side_effects`(JSONB) |
-| `beginner` | 编程初学者 | `explanation_simple`(通俗解释), `explanation_logic`(逻辑说明) |
-| `expert` | 有经验的开发者 | `tech_details`, `error_handling`, `concurrency`, `tradeoffs` |
+| Mode | Audience | Generated Content |
+|------|----------|-------------------|
+| `ai` **(default)** | AI agents, MCP tools | `purpose`, `inputs`(JSONB), `outputs`(JSONB), `side_effects`(JSONB) |
+| `beginner` | Programming learners | `explanation_simple`, `explanation_logic` |
+| `expert` | Experienced developers | `tech_details`, `error_handling`, `concurrency`, `tradeoffs` |
 
-### 模式切换
+### Switching Modes
 
 ```bash
-# 切换为专家模式
+# Switch to expert mode
 curl -X PUT http://localhost:8000/api/projects/1/mode?mode=expert
 
-# 切换模式并完整重新分析（重新调用 LLM 生成）
+# Switch and fully reanalyze (regenerate all LLM content)
 curl -X PUT "http://localhost:8000/api/projects/1/mode?mode=beginner&full_reanalysis=true"
 
-# 批量迁移所有项目到同一模式
+# Batch migrate all projects to same mode
 curl -X POST http://localhost:8000/api/reanalyze/batch-migrate-mode \
   -H "Content-Type: application/json" \
   -d '{"target_mode": "expert"}'
 ```
 
-### 设计原则
+### Design Principles
 
-| 原则 | 说明 |
-|------|------|
-| AI 元数据始终生成 | MCP 工具依赖 `ai_` 字段，即使切换模式也不会丢失 |
-| 模式切换保留已有内容 | 切换到新模式时，旧模式的内容不会被覆盖 |
-| 可增量填充 | 使用 `fill-mode-content` 仅为缺失模式填充，无需重头开始 |
-| 断点续传 | LLM 批处理过程中断可从检查点恢复 |
+| Principle | Description |
+|-----------|-------------|
+| AI metadata always generated | `ai_` fields are never lost during mode switches (MCP depends on them) |
+| Mode switching preserves existing content | Switching to a new mode does not overwrite old mode's content |
+| Incremental fill | Use `fill-mode-content` to add missing mode content without a full reanalysis |
+| Checkpoint resume | LLM batch processing can resume from checkpoints on interruption |
 
-### 模式内容示例
+### Mode Content Examples
 
-**ai 模式**（一个函数的元数据）:
+**ai mode** (structured metadata for a function):
 ```json
 {
-  "ai_purpose": "验证用户 JWT token 并返回用户信息",
+  "ai_purpose": "Validate user JWT token and return user info",
   "ai_inputs": [{"name": "token", "type": "str", "desc": "JWT token from Authorization header"}],
-  "ai_outputs": [{"name": "user", "type": "dict", "desc": "用户信息包含 id, email, role"}],
-  "ai_side_effects": ["读取 Redis 缓存", "写入审计日志"]
+  "ai_outputs": [{"name": "user", "type": "dict", "desc": "User info with id, email, role"}],
+  "ai_side_effects": ["Reads Redis cache", "Writes audit log"]
 }
 ```
 
-**beginner 模式**:
+**beginner mode** (plain explanation):
 ```json
 {
-  "explanation_simple": "这个函数检查用户的登录凭证是否有效。你给它一个密码，它去数据库查一下对不对，对了就让你登录，不对就拒绝。",
-  "explanation_logic": "接收用户名和密码 → 从数据库查找用户 → 用 bcrypt 验证密码哈希 → 生成 session → 返回结果"
+  "explanation_simple": "This function checks if a user's login credentials are valid. You give it a password, it checks against the database — if correct, you're logged in; if not, access is denied.",
+  "explanation_logic": "Receives username + password → looks up user in database → verifies password hash with bcrypt → generates session → returns result"
 }
 ```
 
-**expert 模式**:
+**expert mode** (deep technical analysis):
 ```json
 {
-  "expert_purpose": "OAuth2 密码流认证，支持多因子认证回退",
-  "expert_tech_details": "使用 passlib 的 bcrypt 进行密码哈希验证，通过 SQLAlchemy async session 查询用户记录",
-  "expert_error_handling": "UserNotFound -> 404, PasswordMismatch -> 401, AccountLocked -> 423",
-  "expert_concurrency": "每个请求独立 session，无共享状态，天然线程安全",
-  "expert_tradeoffs": "使用 bcrypt 成本因子 12：安全性高但每次验证约 250ms"
+  "expert_purpose": "OAuth2 password flow authentication with MFA fallback",
+  "expert_tech_details": "Uses passlib's bcrypt for password hash verification via SQLAlchemy async session",
+  "expert_error_handling": "UserNotFound → 404, PasswordMismatch → 401, AccountLocked → 423",
+  "expert_concurrency": "Each request has its own session — no shared state, naturally thread-safe",
+  "expert_tradeoffs": "bcrypt cost factor 12: high security at ~250ms per verification"
 }
 ```
 
 ---
 
-## 📦 Batch Analysis 批量分析
+## 📦 Batch Analysis with Checkpoint Resume
 
-支持大规模批量分析，设计目标是一次性扫描数十个仓库。
+Supports large-scale batch analysis — designed to scan dozens of repositories in one go.
 
 ```bash
-# 批量提交 51 个仓库
+# Batch submit 50+ repositories
 for repo in \
   "https://github.com/user/repo1.git" \
   "https://github.com/user/repo2.git"; do
   curl -s -X POST http://localhost:8000/api/analyze \
     -H "Content-Type: application/json" \
     -d "{\"repo_url\": \"$repo\"}"
-  sleep 0.8  # 避免单 worker 过载
+  sleep 0.8  # avoid overloading single worker
 done
 ```
 
-### 断点续传（Checkpoint Resume）
+### Checkpoint System
 
-这是批量分析的关键保障。任何任务在每一步都会保存检查点：
+Every task saves progress at each step. If the worker restarts, the task resumes from the last checkpoint:
 
-| 检查点 | 保存内容 | 恢复行为 |
-|--------|---------|---------|
-| Clone 完成 | 项目记录创建 | 跳过 clone 直接解析 |
-| 文件解析 | `processed_files` JSONB 数组 | 只解析未处理文件 |
-| LLM 批处理 | 已处理函数 ID 列表 | 跳过已生成函数 |
-| 关系提取 | 已处理文件列表 | 跳过已分析文件 |
+| Checkpoint | Saved State | Resume Behavior |
+|------------|-------------|-----------------|
+| Clone complete | Project record created | Skip clone, go direct to parsing |
+| Files parsed | `processed_files` JSONB array | Parse only unprocessed files |
+| LLM batch | List of processed function IDs | Skip already-generated functions |
+| Relationship extraction | List of processed files | Skip already-analyzed files |
 
 ```bash
-# 查看任务断点
+# View task checkpoint
 curl http://localhost:8000/api/tasks/{task_id}/checkpoint
 
-# 恢复中断的任务（worker 重启后使用）
+# Resume interrupted task (use after worker restart)
 curl -X POST http://localhost:8000/api/tasks/{task_id}/resume
 
-# 列出所有未完成的任务
+# List all unfinished tasks
 curl http://localhost:8000/api/tasks/unfinished
 ```
 
-**实际验证**: 一次从 Chrome 书签中提取了 85 个 GitHub 仓库，跳过已分析的 34 个，批量提交 51 个新仓库。任务在 10 worker 并发下稳定运行，部分仓库 151 文件/195 函数在数分钟内完成分析。
+**Verified in production**: Extracted 85 GitHub repositories from Chrome bookmarks, skipped 34 already-analyzed repos, and batch-submitted 51 new ones. Tasks ran stably with 10 concurrent workers — a 151-file/195-function repo completed within minutes.
 
 ---
 
-## 🔌 Offline Mode 离线模式
+## 🔌 Offline Mode
 
-Code Analyzer 支持完全离线运行，无需持续依赖 LLM API。
+Code Analyzer supports fully offline operation without continuous LLM API dependency.
 
-### 如何工作
+### How It Works
 
-1. **在线时**: 正常分析仓库，LLM 生成结构化元数据，保存到 PostgreSQL
-2. **离线时**: MCP 服务器自动回退到本地 SQLite 数据库，继续提供搜索和上下文查询
-3. **同步**: `sync_to_sqlite.py` 脚本将 PostgreSQL 数据同步到本地 SQLite 文件
+1. **Online**: Analyze repos normally, LLM generates structured metadata, saved to PostgreSQL
+2. **Offline**: MCP server falls back to local SQLite database, continues serving search and context queries
+3. **Sync**: `sync_to_sqlite.py` copies PostgreSQL data to a local SQLite file
 
 ```bash
-# 将 PostgreSQL 数据同步到本地 SQLite
+# Sync PostgreSQL data to local SQLite
 python sync_to_sqlite.py \
   --pg-url "postgresql://user:pass@host:5432/db" \
   --sqlite-path ./mcp-server-local/code_analyzer.db
 
-# 启动离线 MCP 服务器（不依赖 Docker）
+# Start offline MCP server (no Docker required)
 node mcp-server-local/index.js
 ```
 
-**适用场景**:
-- 开发环境网络受限的团队
-- 笔记本电脑离线时仍需要搜索已分析代码
-- 减少 LLM API 调用成本
-- CI/CD 环境中不需要 LLM 生成的只读查询
+**Use cases**:
+- Teams with restricted network access
+- Laptop disconnected from internet but still needs to search analyzed code
+- Reduce LLM API costs
+- Read-only queries in CI/CD environments
 
-### 离线 MCP 服务器配置
+### Offline MCP Server Configuration
 
 ```json
 {
@@ -334,70 +330,70 @@ node mcp-server-local/index.js
 
 ---
 
-## 🔬 Code Parsing 代码解析
+## 🔬 Code Parsing
 
-多语言解析引擎，支持 6+ 语言。
+Multi-language parsing engine supporting 6+ languages.
 
-| 语言 | 解析方式 | 解析深度 | 提取内容 |
-|------|---------|---------|---------|
-| Python | **AST 解析** | 精确语法树 | 函数、类、参数类型、装饰器、docstring、返回值类型 |
-| JavaScript/JSX/TSX | 正则解析 | 函数/类签名 | 函数、类、导出 |
-| TypeScript | 正则解析 | 函数/类签名 | 函数、类、接口 |
-| Go | 正则解析 | 函数签名 | 函数、方法、结构体 |
-| Java | 正则解析 | 类/方法签名 | 类、方法、注解 |
-| Rust | 正则解析 | 函数签名 | 函数、trait、impl |
-| 其他 | 通用正则 | 粗略识别 | 基础函数定义 |
+| Language | Parser | Parse Depth | Extracted Information |
+|----------|--------|-------------|----------------------|
+| Python | **AST** (native `ast` module) | Full syntax tree | Functions, classes, parameter types, decorators, docstrings, return types |
+| JavaScript/JSX/TSX | Regex | Function/class signatures | Functions, classes, exports |
+| TypeScript | Regex | Function/class signatures | Functions, classes, interfaces |
+| Go | Regex | Function signatures | Functions, methods, structs |
+| Java | Regex | Class/method signatures | Classes, methods, annotations |
+| Rust | Regex | Function signatures | Functions, traits, impl blocks |
+| Others | Generic regex | Rough recognition | Basic function definitions |
 
-**Python AST 解析优势**: Python 使用原生 `ast` 模块进行精确解析，可以提取：
-- 带默认值的精确参数列表
-- 返回类型注解
-- 装饰器链
-- 类继承关系
-- 函数体内调用关系
-
----
-
-## 🔍 Search System 搜索系统
-
-基于 PostgreSQL 全文检索，支持多种搜索方式。
-
-### 技术实现
-
-| 组件 | 实现 |
-|------|------|
-| 索引引擎 | PostgreSQL `tsvector` + `ts_rank` |
-| 搜索范围 | 函数名、代码片段、AI 元数据、解释字段 |
-| 过滤 | 按编程语言过滤 |
-| 分组 | 按文件路径或项目分组 |
-
-### 搜索类型对比
-
-| 搜索类型 | 端点 | 数据来源 | 用途 |
-|---------|------|---------|------|
-| AI 优化搜索 | `/api/ai/search` | `ai_purpose`, `ai_inputs`, `ai_outputs`, `ai_side_effects` | MCP 工具 / AI 代理消费 |
-| 通用搜索 | `/api/search` | 全部字段 + 代码片段 | 人类阅读 + 详细理解 |
-| 引用搜索 | `/api/reference` | 精简字段 | 快速代码参考 |
-| 类搜索 | `/api/classes/search` | 类定义字段 | 查找类定义和 OOP 结构 |
+**Python AST advantage**: Python uses the native `ast` module for precise parsing — it extracts:
+- Exact parameter lists with default values
+- Return type annotations
+- Decorator chains
+- Class inheritance relationships
+- Function call relationships within bodies
 
 ---
 
-## 📊 Relationship Graph 调用关系图
+## 🔍 Search System
 
-自动提取函数间的调用、实现、继承关系，构建完整的调用图。
+PostgreSQL full-text search engine with multiple search modes.
 
-### 提取的关系类型
+### Technical Implementation
 
-| 关系类型 | 说明 | 示例 |
-|---------|------|------|
-| `CALLS` | 函数 A 调用函数 B | `handleLogin` CALLS `validatePassword` |
-| `IMPLEMENTS` | 方法实现接口/抽象 | `JSONSerializer` IMPLEMENTS `BaseSerializer` |
-| `EXTENDS` | 类继承 | `AdminUser` EXTENDS `BaseUser` |
+| Component | Implementation |
+|-----------|---------------|
+| Index engine | PostgreSQL `tsvector` + `ts_rank` |
+| Search scope | Function names, code snippets, AI metadata, explanation fields |
+| Filtering | By programming language |
+| Grouping | By file path or project |
 
-### 影响链分析
+### Search Types Compared
+
+| Search Type | Endpoint | Data Source | Purpose |
+|------------|----------|-------------|---------|
+| AI-optimized | `/api/ai/search` | `ai_purpose`, `ai_inputs`, `ai_outputs`, `ai_side_effects` | AI agent / MCP tool consumption |
+| General | `/api/search` | All fields + code snippets | Human reading + detailed understanding |
+| Reference | `/api/reference` | Compact fields | Quick code reference |
+| Class | `/api/classes/search` | Class definition fields | OOP structure discovery |
+
+---
+
+## 📊 Relationship Graph
+
+Automatically extracts function call, implementation, and inheritance relationships to build a complete call graph.
+
+### Relationship Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `CALLS` | Function A calls function B | `handleLogin` CALLS `validatePassword` |
+| `IMPLEMENTS` | Method implements interface/abstract | `JSONSerializer` IMPLEMENTS `BaseSerializer` |
+| `EXTENDS` | Class inherits from another | `AdminUser` EXTENDS `BaseUser` |
+
+### Impact Chain Analysis
 
 ```
-上游（谁受我影响）:                   下游（我依赖谁）:
-                                    
+Upstream (who I affect):            Downstream (what I depend on):
+
   api/login.py:handleRequest          api/auth.py:validateToken
         │                                    │
         ▼                                    ▼
@@ -408,60 +404,59 @@ node mcp-server-local/index.js
 ```
 
 ```bash
-# 上游分析：谁调用了这个函数（修改会影响谁）
+# Upstream analysis: who calls this function (who is affected if I modify it)
 curl "http://localhost:8000/api/functions/42/impact?depth=3&direction=upstream"
 
-# 下游分析：这个函数调用了谁（它依赖什么）
+# Downstream analysis: what does this function call (what does it depend on)
 curl "http://localhost:8000/api/functions/42/impact?depth=3&direction=downstream"
 
-# 简要上下文
+# Brief context (callers + callees)
 curl http://localhost:8000/api/functions/42/context
 # → {"callers": [...], "callees": [...]}
 ```
 
 ---
 
-## 🚀 Quick Start 快速开始
+## 🚀 Quick Start
 
-### 前置条件
+### Prerequisites
 
 - Docker & Docker Compose
-- LLM API Key (DeepSeek Chat [免费注册](https://platform.deepseek.com/) / OpenAI / 兼容接口)
+- LLM API Key (DeepSeek Chat [free signup](https://platform.deepseek.com/) / OpenAI / compatible)
 
-### 一键启动
+### One-Click Startup
 
 ```bash
-# 1. 克隆仓库
+# 1. Clone
 git clone https://github.com/13051431832-cmd/code-analyzer.git
 cd code-analyzer
 
-# 2. 配置环境变量
+# 2. Configure environment
 cp .env.example .env
-# 编辑 .env，填入 LLM_API_KEY
+# Edit .env: set LLM_API_KEY
 
-# 3. 启动所有服务
+# 3. Start all services
 docker compose up -d
 
-# 4. 验证服务
+# 4. Verify
 curl http://localhost:8000/health
 # → {"status":"ok","service":"code-analyzer-api"}
 
-# 5. 分析一个项目
+# 5. Analyze a project
 curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/opendataloader-project/opendataloader-pdf.git"}'
-# → {"task_id": "abc123..."}
 
-# 6. 查看进度
-curl http://localhost:8000/api/analyze/abc123.../status
+# 6. Check progress
+curl http://localhost:8000/api/analyze/<task_id>/status
 
-# 7. 分析完成后，搜索代码
+# 7. Search analyzed code
 curl "http://localhost:8000/api/ai/search?q=file+processing&limit=5"
 ```
 
-### 注册 MCP 服务器（Claude Code）
+### Register MCP Server (for Claude Code)
 
-在 `~/.claude.json` 中添加：
+Add to `~/.claude.json`:
 
 ```json
 {
@@ -475,11 +470,11 @@ curl "http://localhost:8000/api/ai/search?q=file+processing&limit=5"
 }
 ```
 
-重启 Claude Code，即可在对话中使用 all 14 个搜索工具。
+Restart Claude Code — all 14 search tools are available immediately in any conversation.
 
 ---
 
-## 🏗 Architecture 架构
+## 🏗 Architecture
 
 ```
 ┌──────────┐     ┌──────────┐     ┌───────────┐     ┌──────────┐
@@ -494,178 +489,176 @@ curl "http://localhost:8000/api/ai/search?q=file+processing&limit=5"
                └──────────────┘  └──────────────┘
 ```
 
-### 分析管线
+### Analysis Pipeline
 
 ```
-                       ┌────────────────────────────────────┐
-                       │          Analysis Pipeline          │
-                       ├────────────────────────────────────┤
+                       ┌────────────────────────────────────────────┐
+                       │            Analysis Pipeline               │
+                       ├────────────────────────────────────────────┤
   GitHub URL ──▶ 1. Clone ──▶ 2. Parse ──▶ 3. Extract ──▶ 4. LLM ──▶ 5. Save
                 GitPython     AST/Regex    Relationships  Generate    to DB
                                │              │              │         │
                                ▼              ▼              ▼         ▼
-                         函数/类签名       CALLS关系      AI元数据    PostgreSQL
-                         参数提取         IMPLEMENTS     通俗解释    断点续传
-                         类型注解         EXTENDS        专家分析    多模式
+                         Function/class    CALLS rels     AI metadata  PostgreSQL
+                         signatures        IMPLEMENTS     explanations Checkpoint
+                         parameters        EXTENDS        expert       Multi-mode
 ```
 
-### 项目结构
+### Project Structure
 
 ```
 code_analyzer_mvp/
-├── api/                          # FastAPI 后端
-│   ├── main.py                  # 应用入口 + 路由注册 + CORS
-│   ├── ai.py                    # AI 优化搜索 / 函数上下文 / 调用图邻域
-│   ├── analyze.py               # 分析任务提交 + 状态查询
-│   ├── tasks.py                 # Celery 异步任务（~1300行核心逻辑）
-│   ├── llm_service.py           # LLM 调用 + 三模式提示词管理
-│   ├── crud.py                  # 数据库 CRUD 操作
-│   ├── search_service.py        # PostgreSQL tsvector 全文搜索
-│   ├── models.py                # SQLAlchemy ORM（6个模型）
-│   ├── schemas.py               # Pydantic 请求/响应模型
-│   ├── config.py                # 全局配置
-│   ├── reanalyze.py             # 批量重新分析 + 模式切换
-│   ├── relations.py             # 函数调用关系图
-│   ├── projects.py              # 项目管理
-│   ├── functions.py             # 函数详情
-│   ├── classes.py               # 类详情
-│   ├── files.py                 # 文件-函数关联
-│   ├── database.py              # SQLAlchemy 引擎/会话
-│   ├── report_generator.py      # 分析报告生成
-│   └── parsers/                 # 代码解析器
-│       ├── python_parser.py     # Python AST 解析（精确语法树）
-│       └── generic_parser.py    # 通用正则解析（JS/TS/Go/Java/Rust）
-├── mcp-server/                  # MCP 协议服务器（在线版）
-│   └── index.js                 # 14 个 MCP 工具
-├── mcp-server-local/            # MCP 协议服务器（离线版）
-│   └── index.js                 # 不需要 Docker，基于 SQLite
-├── frontend/                    # React 前端
+├── api/                          # FastAPI backend
+│   ├── main.py                  # App entry + route registration + CORS
+│   ├── ai.py                    # AI-optimized search / function context / neighborhood
+│   ├── analyze.py               # Task submission + status queries
+│   ├── tasks.py                 # Celery async tasks (~1300 lines of core logic)
+│   ├── llm_service.py           # LLM invocation + 3-mode prompt templates
+│   ├── crud.py                  # Database CRUD operations
+│   ├── search_service.py        # PostgreSQL tsvector full-text search
+│   ├── models.py                # SQLAlchemy ORM (6 models)
+│   ├── schemas.py               # Pydantic request/response models
+│   ├── config.py                # Global configuration
+│   ├── reanalyze.py             # Batch reanalysis + mode switching
+│   ├── relations.py             # Function call relationship graph
+│   ├── projects.py              # Project management
+│   ├── functions.py             # Function details
+│   ├── classes.py               # Class details
+│   ├── files.py                 # File-function associations
+│   ├── database.py              # SQLAlchemy engine/session
+│   ├── report_generator.py      # Analysis report generation
+│   └── parsers/                 # Code parsers
+│       ├── python_parser.py     # Python AST parser (precise syntax tree)
+│       └── generic_parser.py    # Generic regex parser (JS/TS/Go/Java/Rust)
+├── mcp-server/                  # MCP protocol server (online)
+│   └── index.js                 # 14 MCP tools for Claude Code
+├── mcp-server-local/            # MCP protocol server (offline)
+│   └── index.js                 # No Docker needed, SQLite-based
+├── frontend/                    # React frontend
 │   └── src/
-│       ├── CodeLearningView.jsx # 主界面（模式切换 + 代码展示）
+│       ├── CodeLearningView.jsx # Main view (mode switching + code display)
 │       └── App.js
-├── tests/                       # 测试套件
+├── tests/                       # Test suite
 │   ├── conftest.py              # TestClient + sample_project fixtures
-│   └── test_three_mode.py       # 三模式集成测试（24 个用例）
-├── worker/                      # Celery worker 配置
-├── ca.sh                        # 终端搜索 CLI
-├── sync_to_sqlite.py            # PostgreSQL → SQLite 同步脚本
-├── docker-compose.yml           # 容器编排（5 个服务）
-├── .env.example                 # 环境变量模板
-└── requirements.txt             # Python 依赖
+│   └── test_three_mode.py       # 3-mode integration tests (24 test cases)
+├── worker/                      # Celery worker config
+├── ca.sh                        # Terminal search CLI
+├── sync_to_sqlite.py            # PostgreSQL → SQLite sync script
+├── docker-compose.yml           # Container orchestration (5 services)
+├── .env.example                 # Environment variable template
+└── requirements.txt             # Python dependencies
 ```
 
 ---
 
-## 📖 API Reference API参考
+## 📖 API Reference
 
-### 分析任务
+### Analysis Tasks
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/analyze` | 提交分析任务 |
-| `GET` | `/api/analyze/{id}/status` | 查询任务状态 |
-| `GET` | `/api/tasks/{id}/checkpoint` | 获取任务检查点 |
-| `POST` | `/api/tasks/{id}/resume` | 恢复中断任务 |
-| `GET` | `/api/tasks/unfinished` | 列出未完成任务 |
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/analyze` | Submit analysis task |
+| `GET` | `/api/analyze/{id}/status` | Query task status |
+| `GET` | `/api/tasks/{id}/checkpoint` | Get task checkpoint |
+| `POST` | `/api/tasks/{id}/resume` | Resume interrupted task |
+| `GET` | `/api/tasks/unfinished` | List unfinished tasks |
 
-### 项目管理
+### Project Management
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/projects` | 列出所有项目 |
-| `GET` | `/api/projects/stats` | 项目统计 |
-| `GET` | `/api/projects/{id}` | 项目详情 |
-| `GET` | `/api/projects/{id}/files` | 项目文件 + 函数/类 |
-| `PUT` | `/api/projects/{id}/mode` | 切换分析模式 |
-| `POST` | `/api/projects/{id}/switch-mode` | 切换模式 + 后台填充 |
-| `POST` | `/api/projects/{id}/fill-mode-content` | 填充缺失模式内容 |
-| `POST` | `/api/reanalyze/batch-migrate-mode` | 批量迁移模式 |
-| `POST` | `/api/reanalyze/regenerate-overview/{id}` | 重新生成项目概览 |
-| `DELETE` | `/api/projects/{id}` | 删除项目 |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/projects` | List all projects |
+| `GET` | `/api/projects/stats` | Project statistics |
+| `GET` | `/api/projects/{id}` | Project details |
+| `GET` | `/api/projects/{id}/files` | Project files + functions/classes |
+| `PUT` | `/api/projects/{id}/mode` | Switch analysis mode |
+| `POST` | `/api/projects/{id}/switch-mode` | Switch mode + background fill |
+| `POST` | `/api/projects/{id}/fill-mode-content` | Fill missing mode content |
+| `POST` | `/api/reanalyze/batch-migrate-mode` | Batch mode migration |
+| `POST` | `/api/reanalyze/regenerate-overview/{id}` | Regenerate project overview |
+| `DELETE` | `/api/projects/{id}` | Delete project |
 
-### AI 优化搜索（MCP 工具调用）
+### AI-Optimized Search (MCP targets)
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/ai/search` | AI 优化搜索 |
-| `GET` | `/api/ai/functions/{id}/context` | AI 函数上下文 |
-| `GET` | `/api/ai/functions/{id}/neighborhood` | 调用图邻域 |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/ai/search` | AI-optimized search |
+| `GET` | `/api/ai/functions/{id}/context` | AI function context |
+| `GET` | `/api/ai/functions/{id}/neighborhood` | Call graph neighborhood |
 
-### 通用搜索
+### General Search
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/search` | 通用搜索 |
-| `GET` | `/api/reference` | 引用搜索 |
-| `GET` | `/api/classes/search` | 类搜索 |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/search` | General search |
+| `GET` | `/api/reference` | Compact reference search |
+| `GET` | `/api/classes/search` | Class search |
 
-### 函数分析
+### Function Analysis
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/functions/{id}/detail` | 函数详情 |
-| `GET` | `/api/functions/{id}/context` | 调用上下文 |
-| `GET` | `/api/functions/{id}/impact` | 影响链 |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/functions/{id}/detail` | Function details |
+| `GET` | `/api/functions/{id}/context` | Call context |
+| `GET` | `/api/functions/{id}/impact` | Impact chain |
 
-### 文件和类
+### Files & Classes
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/files/{id}` | 文件详情 |
-| `GET` | `/api/files/by-path` | 按路径查文件 |
-| `GET` | `/api/classes/{id}` | 类详情 |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/files/{id}` | File details |
+| `GET` | `/api/files/by-path` | Lookup file by path |
+| `GET` | `/api/classes/{id}` | Class details |
 
 ---
 
-## ⚙️ Configuration 配置
+## ⚙️ Configuration
 
-### 环境变量
+### Environment Variables
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `DATABASE_URL` | PostgreSQL 连接 | `postgresql://code_analyzer:password@postgres:5432/code_analyzer_db` |
-| `REDIS_URL` | Redis 连接 | `redis://redis:6379/0` |
-| `LLM_API_KEY` | LLM API 密钥 | **必填** |
-| `LLM_MODEL` | 模型名 | `deepseek-chat` |
-| `LLM_BASE_URL` | API 地址 | `https://api.deepseek.com` |
-| `API_KEYS` | API 密钥 JSON | `{"mvp_key": "default_project"}` |
-| `TEMP_DIR` | 临时目录 | `/tmp/code_analysis` |
-| `SEARCH_DEFAULT_LIMIT` | 默认搜索条数 | `20` |
-| `SEARCH_MAX_LIMIT` | 最大搜索条数 | `100` |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection | `postgresql://code_analyzer:password@postgres:5432/code_analyzer_db` |
+| `REDIS_URL` | Redis connection | `redis://redis:6379/0` |
+| `LLM_API_KEY` | LLM API key | **Required** |
+| `LLM_MODEL` | Model name | `deepseek-chat` |
+| `LLM_BASE_URL` | API endpoint | `https://api.deepseek.com` |
+| `API_KEYS` | API keys JSON | `{"mvp_key": "default_project"}` |
+| `TEMP_DIR` | Temp directory | `/tmp/code_analysis` |
+| `SEARCH_DEFAULT_LIMIT` | Default search limit | `20` |
+| `SEARCH_MAX_LIMIT` | Max search limit | `100` |
 
-### Docker Compose 服务
+### Docker Compose Services
 
-| 服务 | 镜像 | 端口 | 说明 |
-|------|------|------|------|
-| `postgres` | postgres:15 | 5432 | 主数据库 |
-| `redis` | redis:7 | 6379 | 消息队列 + 结果后端 |
-| `api` | 自构建 | 8000 | FastAPI 应用 |
-| `worker` | 自构建 | - | Celery 异步任务（10 并发） |
+| Service | Image | Port | Description |
+|---------|-------|------|-------------|
+| `postgres` | postgres:15 | 5432 | Primary database |
+| `redis` | redis:7 | 6379 | Message broker + result backend |
+| `api` | self-built | 8000 | FastAPI application |
+| `worker` | self-built | - | Celery async tasks (10 concurrency) |
 | `frontend` | node:18 | 3000 | React UI |
 
 ---
 
-## 🧪 Testing 测试
+## 🧪 Testing
 
 ```bash
-# 运行所有测试
+# Run all tests
 docker compose exec api pytest tests/ -v
 
-# 三模式集成测试（24 个测试用例）
+# Three-mode integration tests (24 test cases)
 docker compose exec api pytest tests/test_three_mode.py -v
 
-# 指定类测试
+# Class-specific test
 docker compose exec api pytest tests/test_three_mode.py::TestProjectMode -v
 ```
 
 ---
 
-## 📄 License 许可证
+## 📄 License
 
 MIT
 
 ---
 
 > Built for the AI era — where understanding code at scale is no longer a human-only job.
->
-> 为 AI 时代而生——大规模理解代码不再只是人类的工作。
