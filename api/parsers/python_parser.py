@@ -20,50 +20,48 @@ def parse_python_file(file_path: str) -> dict:
     # Track function/method name -> line range for call attribution
     func_ranges: dict[str, tuple[int, int]] = {}
 
+    def _extract_function(node, is_method=False):
+        """Extract a function/method definition, recursing for nested functions."""
+        args = [arg.arg for arg in node.args.args]
+        param_types = {}
+        for arg in node.args.args:
+            if arg.annotation:
+                param_types[arg.arg] = _ast_node_to_type_str(arg.annotation)
+        return_type = _ast_node_to_type_str(node.returns) if node.returns else None
+        signature = f"{node.name}({', '.join(args)})"
+        entry = {
+            "name": node.name,
+            "signature": signature,
+            "start_line": node.lineno,
+            "end_line": node.end_lineno,
+            "docstring": ast.get_docstring(node) or "",
+            "return_type": return_type,
+            "param_types": param_types,
+        }
+        if not is_method:
+            result["functions"].append(entry)
+        func_ranges[node.name] = (node.lineno, node.end_lineno)
+
+        # Recurse into function body for nested/inner functions
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _extract_function(child)
+        return entry
+
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = [arg.arg for arg in node.args.args]
-            # Extract type annotations
-            param_types = {}
-            for arg in node.args.args:
-                if arg.annotation:
-                    param_types[arg.arg] = _ast_node_to_type_str(arg.annotation)
-            # Return type annotation
-            return_type = _ast_node_to_type_str(node.returns) if node.returns else None
-            signature = f"{node.name}({', '.join(args)})"
-            result["functions"].append({
-                "name": node.name,
-                "signature": signature,
-                "start_line": node.lineno,
-                "end_line": node.end_lineno,
-                "docstring": ast.get_docstring(node) or "",
-                "return_type": return_type,
-                "param_types": param_types,
-            })
-            func_ranges[node.name] = (node.lineno, node.end_lineno)
+            _extract_function(node)
 
         elif isinstance(node, ast.ClassDef):
             methods = []
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    args = [arg.arg for arg in child.args.args]
-                    # Extract type annotations for methods
-                    param_types = {}
-                    for arg in child.args.args:
-                        if arg.annotation:
-                            param_types[arg.arg] = _ast_node_to_type_str(arg.annotation)
-                    return_type = _ast_node_to_type_str(child.returns) if child.returns else None
-                    signature = f"{child.name}({', '.join(args)})"
-                    methods.append({
-                        "name": child.name,
-                        "signature": signature,
-                        "start_line": child.lineno,
-                        "end_line": child.end_lineno,
-                        "docstring": ast.get_docstring(child) or "",
-                        "return_type": return_type,
-                        "param_types": param_types,
-                    })
-                    func_ranges[child.name] = (child.lineno, child.end_lineno)
+                    entry = _extract_function(child, is_method=True)
+                    methods.append(entry)
+                    # Also recurse into method for nested functions
+                    for nested in ast.iter_child_nodes(child):
+                        if isinstance(nested, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            _extract_function(nested)
 
             result["classes"].append({
                 "name": node.name,

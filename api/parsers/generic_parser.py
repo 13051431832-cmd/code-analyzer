@@ -4,32 +4,43 @@ import os
 # Regex patterns to detect function/method definitions in various languages
 FUNCTION_PATTERNS: dict[str, list[re.Pattern]] = {
     "javascript": [
-        re.compile(r"^(?:export\s+)?(?:async\s+)?function\s+\*?\s*(\w+)\s*\("),
-        re.compile(r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\().*=>?\s*"),
-        re.compile(r"^(?:export\s+)?(?:async\s+)?\(?\s*\w+\s*\)?\s*=>"),
+        # Pattern 1: function declaration (supports async, generators, export default, generics)
+        re.compile(r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(\w+)\s*(?:<[^>]+>)?\s*\("),
+        # Pattern 2: const/let/var = function() { (indented or not)
+        re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\*?\s*\([^)]*\)\s*\{"),
+        # Pattern 3: const/let/var = (...) => { or => expr (indented or not)
+        re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>(?:\s*\{|(?:\s|$))"),
+        # Pattern 4: Class/object method definitions (indented get/set/async/static/accessor, generics)
+        re.compile(r"^\s*(?:(?:async|static|accessor|get|set)\s+)*(?:get\s+|set\s+)?([a-zA-Z_$][\w$]*)\s*(?:<[^>]+>)?\s*\([^)]*\)\s*(?:\{|=>|<)"),
+        # Pattern 5: Arrow-function methods in class bodies like foo = () => {
+        re.compile(r"^\s*(?:(?:async|static|accessor)\s+)*([a-zA-Z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>(?:\s*\{|(?:\s|$))"),
     ],
     "typescript": [
-        re.compile(r"^(?:export\s+)?(?:async\s+)?function\s+\*?\s*(\w+)\s*\("),
-        re.compile(r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*[=:]\s*(?:async\s+)?(?:function|\().*=>?\s*"),
-        re.compile(r"^(?:public|private|protected|static|readonly|export)?\s*(?:async\s+)?(\w+)\s*\([^)]*\)\s*:"),
-        re.compile(r"^(?:public|private|protected|static)?\s*get\s+(\w+)\s*\("),
-        re.compile(r"^(?:public|private|protected|static)?\s*set\s+(\w+)\s*\("),
+        # Pattern 1: function declaration (supports generics <T> after name, generators)
+        re.compile(r"^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(\w+)\s*(?:<[^>]+>)?\s*\("),
+        # Pattern 2: const/let/var with arrows (supports generics <T> before params)
+        re.compile(r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*[=:]\s*(?:async\s+)?(?:function\s*|<[^>]*>\s*)?\(.*=>?\s*"),
+        # Multi-modifier support: (?:mod|mod|...\s+)* allows unlimited modifiers
+        re.compile(r"^(?:(?:public|private|protected|static|readonly|export|abstract)\s+)*(?:async\s+)?(\w+)\s*(?:<[^>]+>)?\s*\([^)]*\)\s*(?::|\{|=>)"),
+        re.compile(r"^(?:(?:public|private|protected|static|readonly)\s+)*get\s+(\w+)\s*\("),
+        re.compile(r"^(?:(?:public|private|protected|static|readonly)\s+)*set\s+(\w+)\s*\("),
     ],
     "go": [
-        re.compile(r"^func\s+(?:\([^)]*\)\s+)?(\w+)\s*\("),
+        # Supports regular functions, methods with receivers, and generics
+        re.compile(r"^func\s+(?:\([^)]*\)\s+)?(\w+)\s*(?:\[[^[\]]*\])?\s*\("),
     ],
     "java": [
-        re.compile(r"^(?:public|private|protected|static|final|abstract|synchronized|native|\s)*\s+(\w+)\s*\([^)]*\)\s*(?:throws\s+\w+)?\s*\{?\s*$"),
+        re.compile(r"^(?:(?:public|private|protected|static|final|abstract|synchronized|native)\s+)*(?:\w+(?:<[^>]*>)?(?:\[\])?\s+)*(\w+)\s*\([^)]*\)\s*(?:throws\s+[\w\s,]+)?\s*\{?\s*$"),
     ],
     "rust": [
-        re.compile(r"^(?:pub\s+)?(?:unsafe\s+)?fn\s+(\w+)\s*<"),
-        re.compile(r"^(?:pub\s+)?(?:unsafe\s+)?fn\s+(\w+)\s*\("),
+        # Supports: pub, pub(crate), unsafe, async, extern "C", const, and generics
+        re.compile(r"^(?:(?:pub(?:\s*\(\s*crate\s*\))?)\s+)?(?:unsafe\s+)?(?:async\s+)?(?:extern\s+(?:\"[^\"]*\"\s+)?)?(?:const\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\("),
     ],
 }
 
 CLASS_PATTERNS: dict[str, list[re.Pattern]] = {
     "javascript": [
-        re.compile(r"^(?:export\s+)?class\s+(\w+)"),
+        re.compile(r"^\s*(?:export\s+)?class\s+(\w+)"),
     ],
     "typescript": [
         re.compile(r"^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)"),
@@ -45,8 +56,6 @@ CLASS_PATTERNS: dict[str, list[re.Pattern]] = {
     ],
 }
 
-GO_STRUCT_PATTERN = re.compile(r"^type\s+(\w+)\s+struct")
-
 # NOTE: Go has no classes; this catches structs and interfaces
 CLASS_PATTERNS["go"] = [
     re.compile(r"^type\s+(\w+)\s+(?:struct|interface)"),
@@ -57,9 +66,13 @@ CLASS_PATTERNS["go"] = [
 RETURN_TYPE_PATTERNS: dict[str, re.Pattern] = {
     "typescript": re.compile(r"\)\s*:\s*(\w+(?:<[^>]*>)?(?:\s*\|\s*\w+(?:<[^>]*>)?)*)\s*(?:\{|=>|;)"),
     "go": re.compile(r"\)\s*(\(\s*[\w\s,*\[\]]+\s*\)|\w+(?:\[\])?)\s*(?:\{|$)"),
-    "java": re.compile(r"\)\s*(?:throws\s+\w+\s*)?\{?\s*$"),
     "rust": re.compile(r"\)\s*(?:->\s*(\w+(?:<[^>]*>)?(?:\s*\|\s*\w+(?:<[^>]*>)?)*))\s*(?:\{|where)"),
 }
+
+# Java return type pattern: extract the word between last modifier and function name
+JAVA_RETURN_TYPE_PATTERN = re.compile(
+    r"(?:public|private|protected|static|final|abstract|synchronized|native|\s)*\s*(\w+(?:\[\])?(?:<[^>]*>)?)\s+\w+\s*\("
+)
 
 # Parameter type extraction: regex to parse "name: Type" from function signatures
 PARAM_TYPE_PATTERN = re.compile(r"(\w+)\s*:\s*(\w+(?:<[^>]*>)?(?:\s*\|\s*\w+(?:<[^>]*>)?)?)")
@@ -84,7 +97,8 @@ CALL_SKIP_KEYWORDS = frozenset({
     "if", "for", "while", "switch", "catch", "return", "else", "then",
     "with", "elif", "when", "yield", "throw", "delete", "typeof",
     "instanceof", "void", "await", "yield", "assert", "print", "println",
-    "super", "new",
+    "super", "new", "do", "case", "try", "finally", "class", "function",
+    "continue", "break", "debugger", "default",
 })
 
 # Import detection patterns per language
@@ -177,37 +191,72 @@ def _extract_line_comment(lines: list[str], line_no: int, lang: str) -> str:
 
 def _extract_js_ts_signature(lines: list[str], start_idx: int, lang: str) -> str:
     """
-    For JS/TS, try to build a full signature by collecting lines until the opening '{' or '=>'.
-    Returns the detected function name and full signature.
+    For JS/TS, try to build a full signature by collecting lines until the opening '{' or '=>' with brace.
+    Handles multi-line arrow functions where => and { are on separate lines.
     """
     sig_parts = []
     brace_depth = 0
-    for i in range(start_idx, min(start_idx + 15, len(lines))):
+    found_arrow = False
+    for i in range(start_idx, min(start_idx + 20, len(lines))):
         line = lines[i]
         sig_parts.append(line.rstrip())
-        # Check for opening {
         brace_depth += line.count("{") - line.count("}")
-        if brace_depth > 0 or "=>" in line:
+        if "=>" in line:
+            found_arrow = True
+        if brace_depth > 0:
             break
-        if ";" in line and brace_depth == 0:
+        if found_arrow and brace_depth > 0:
             break
+        if not found_arrow and ";" in line and brace_depth == 0:
+            break
+        # If we saw => but haven't found { yet, keep scanning for {
+        if found_arrow:
+            continue
     return " ".join(p.strip() for p in sig_parts)
 
 
 def _estimate_end_lines(lines: list[str], functions: list[dict]) -> list[dict]:
-    """Estimate end_line for each function using next definition at same indent."""
+    """Estimate end_line for each function using nesting-aware indentation logic."""
+    if not functions:
+        return functions
     sorted_funcs = sorted(functions, key=lambda f: f["start_line"])
     total_lines = len(lines)
-    for i, func in enumerate(sorted_funcs):
-        if i + 1 < len(sorted_funcs):
-            func["end_line"] = sorted_funcs[i + 1]["start_line"] - 1
+
+    # Extract indentation level of each function's definition line
+    func_with_indent: list[tuple[dict, int]] = []
+    for f in sorted_funcs:
+        if f["start_line"] <= len(lines):
+            line_text = lines[f["start_line"] - 1]
+            indent = len(line_text) - len(line_text.lstrip())
         else:
-            func["end_line"] = total_lines
+            indent = 0
+        func_with_indent.append((f, indent))
+
+    for i, (func, indent) in enumerate(func_with_indent):
+        # Find the next definition at the same or shallower indent level
+        end = total_lines
+        for j in range(i + 1, len(func_with_indent)):
+            next_func, next_indent = func_with_indent[j]
+            if next_indent <= indent:
+                end = next_func["start_line"] - 1
+                break
+        func["end_line"] = end
+
     return sorted_funcs
+
+
+def _extract_java_return_type(stripped_line: str) -> str | None:
+    """Extract return type from a Java method signature line."""
+    m = JAVA_RETURN_TYPE_PATTERN.search(stripped_line)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def _extract_return_type(signature: str, lang: str) -> str | None:
     """Extract return type from a function signature using language-specific patterns."""
+    if lang == "java":
+        return _extract_java_return_type(signature)
     if lang not in RETURN_TYPE_PATTERNS:
         return None
     pattern = RETURN_TYPE_PATTERNS[lang]
@@ -318,10 +367,38 @@ def parse_generic_file(file_path: str) -> dict:
                     })
                 break
 
-    # --- Post-processing: estimate end lines, extract calls, imports, extends ---
+    # --- Post-processing: estimate end lines, class-method association, calls, imports, extends ---
 
     # Estimate function end lines for call extraction
     result["functions"] = _estimate_end_lines(lines, result["functions"])
+
+    # Associate methods with their enclosing classes
+    if result["classes"] and result["functions"]:
+        # Estimate class end lines using indent-based logic
+        sorted_classes = sorted(result["classes"], key=lambda c: c["start_line"])
+        for i, cls in enumerate(sorted_classes):
+            end = len(lines)
+            for j in range(i + 1, len(sorted_classes)):
+                end = sorted_classes[j]["start_line"] - 1
+                break
+            cls["end_line"] = end
+
+        # For each class, find methods within its line range
+        for cls in sorted_classes:
+            for func in result["functions"]:
+                if cls["start_line"] < func["start_line"] <= cls["end_line"]:
+                    method_entry = {
+                        "name": func["name"],
+                        "signature": func.get("signature", ""),
+                        "start_line": func["start_line"],
+                        "end_line": func["end_line"],
+                        "docstring": func.get("docstring", ""),
+                        "return_type": func.get("return_type"),
+                        "param_types": func.get("param_types", {}),
+                    }
+                    # Avoid duplicates
+                    if not any(m["name"] == method_entry["name"] and m["start_line"] == method_entry["start_line"] for m in cls["methods"]):
+                        cls["methods"].append(method_entry)
 
     # Extract calls from each function body
     for func in result["functions"]:

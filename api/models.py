@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Inde
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 
 Base = declarative_base()
 
@@ -96,6 +97,9 @@ class Function(Base):
 
     # 关联函数引用 (JSONB: [{id, name, file_path, project_name}])
     related_functions = Column(JSONB, nullable=True)
+
+    # 向量嵌入 (pgvector, 1536维 — text-embedding-3-small默认维度)
+    embedding = Column(Vector(1536), nullable=True)
 
 
 class Class(Base):

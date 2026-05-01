@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15
+    image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: code_analyzer
       POSTGRES_PASSWORD: password
@@ -32,6 +32,7 @@ services:
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
+      - temp_data:/tmp/code_analysis
       - /Users/jason/Downloads:/host_downloads:ro
       - /Users/jason/king_analysis:/king_analysis
     ports:
@@ -39,6 +40,7 @@ services:
     environment:
       DATABASE_URL: postgresql://code_analyzer:password@postgres:5432/code_analyzer_db
       REDIS_URL: redis://redis:6379/0
+      TEMP_DIR: /tmp/code_analysis
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +54,7 @@ services:
     command: celery -A api.celery_app worker --loglevel=info
     volumes:
       - .:/app
+      - temp_data:/tmp/code_analysis
       - /Users/jason/Downloads:/host_downloads:ro
       - /Users/jason/king_analysis:/king_analysis
     environment:
@@ -78,3 +81,4 @@ services:
 
 volumes:
   postgres_data:
+  temp_data:

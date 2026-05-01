@@ -13,53 +13,80 @@ SEARCHABLE_LANGUAGES = frozenset({
 })
 
 
-def _build_searchable_text(func) -> str:
-    """Concatenate all text fields of a function into one searchable string."""
-    parts = [
-        func.name or "",
-        func.signature or "",
-        func.docstring or "",
-        func.explanation_simple or "",
-        func.explanation_logic or "",
-        func.ai_purpose or "",
-        func.code_snippet or "",
-    ]
-    return " ".join(parts)
+def _split_identifiers(sql_field: str) -> str:
+    """
+    Wrap a SQL column reference with camelCase and snake_case splitting.
+    e.g. 'getUserById' -> 'get user by id', 'parse_file' -> 'parse file'
+    """
+    return f"""
+        regexp_replace(
+            regexp_replace(
+                coalesce({sql_field}, ''),
+                '([a-z])([A-Z])', '\\\\1 \\\\2', 'g'
+            ),
+            '_', ' ', 'g'
+        )
+    """
+
+
+def _split_query(query: str) -> str:
+    """
+    Apply camelCase and snake_case splitting to a search query string
+    so it matches what _split_identifiers does on the stored data side.
+    e.g. 'getUserById' -> 'get user by id', 'parse_file' -> 'parse file'
+    """
+    import re
+    # Split camelCase: insert space before uppercase letters
+    result = re.sub(r'([a-z])([A-Z])', r'\1 \2', query)
+    # Split snake_case: replace underscores with spaces
+    result = result.replace('_', ' ')
+    return result.lower()
+
+
+def _weighted_tsvector() -> str:
+    """
+    Build a weighted tsvector expression for functions.
+    Uses setweight() to prioritize name > signature/ai_purpose > docstring > code_snippet.
+    Also splits camelCase and snake_case identifiers for better tokenization.
+    """
+    return f"""
+        setweight(to_tsvector('english', {_split_identifiers('f.name')}), 'A') ||
+        setweight(to_tsvector('english', {_split_identifiers('f.signature')}), 'B') ||
+        setweight(to_tsvector('english', {_split_identifiers('f.docstring')}), 'C') ||
+        setweight(to_tsvector('english', {_split_identifiers('f.explanation_simple')}), 'C') ||
+        setweight(to_tsvector('english', {_split_identifiers('f.explanation_logic')}), 'C') ||
+        setweight(to_tsvector('english', {_split_identifiers('f.ai_purpose')}), 'B') ||
+        setweight(to_tsvector('english', {_split_identifiers('f.code_snippet')}), 'D')
+    """
+
+
+def _class_weighted_tsvector() -> str:
+    """Build a weighted tsvector expression for classes."""
+    return f"""
+        setweight(to_tsvector('english', {_split_identifiers('c.name')}), 'A') ||
+        setweight(to_tsvector('english', {_split_identifiers('c.docstring')}), 'B') ||
+        setweight(to_tsvector('english', {_split_identifiers('c.explanation_simple')}), 'C') ||
+        setweight(to_tsvector('english', {_split_identifiers('c.explanation_architecture')}), 'C') ||
+        setweight(to_tsvector('english', {_split_identifiers('c.ai_purpose')}), 'B') ||
+        setweight(to_tsvector('english', {_split_identifiers('c.code_snippet')}), 'D')
+    """
 
 
 def get_search_index_sql() -> str:
-    """
-    Return the SQL expression for creating a GIN index on the searchable text.
-    Includes AI-oriented fields for AI-efficient retrieval.
-    """
-    return """
+    """GIN index for full-text search on functions with field weighting and identifier splitting."""
+    return f"""
     CREATE INDEX IF NOT EXISTS ix_functions_search_text
     ON functions
-    USING GIN (to_tsvector('simple',
-        coalesce(name, '') || ' ' ||
-        coalesce(signature, '') || ' ' ||
-        coalesce(docstring, '') || ' ' ||
-        coalesce(explanation_simple, '') || ' ' ||
-        coalesce(explanation_logic, '') || ' ' ||
-        coalesce(ai_purpose, '') || ' ' ||
-        coalesce(code_snippet, '')
-    ));
+    USING GIN ({_weighted_tsvector()});
     """
 
 
 def get_class_search_index_sql() -> str:
-    """GIN index for full-text search on classes (includes AI fields)."""
-    return """
+    """GIN index for full-text search on classes with field weighting and identifier splitting."""
+    return f"""
     CREATE INDEX IF NOT EXISTS ix_classes_search_text
     ON classes
-    USING GIN (to_tsvector('simple',
-        coalesce(name, '') || ' ' ||
-        coalesce(docstring, '') || ' ' ||
-        coalesce(explanation_simple, '') || ' ' ||
-        coalesce(explanation_architecture, '') || ' ' ||
-        coalesce(ai_purpose, '') || ' ' ||
-        coalesce(code_snippet, '')
-    ));
+    USING GIN ({_class_weighted_tsvector()});
     """
 
 
@@ -112,11 +139,15 @@ def search_code(
     language: str | None = None,
     project_id: int | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[dict]:
     """
     Full-text search across all analyzed functions.
+    Uses weighted tsvector with stemming ('english'), field weighting,
+    and camelCase/snake_case identifier splitting.
     Returns ranked results with metadata.
     """
+    query = _split_query(query)  # Split camelCase/snake_case for matching
     if not query or not query.strip():
         return []
 
@@ -162,36 +193,21 @@ def search_code(
             p.id AS project_id,
             p.name AS project_name,
             ts_rank(
-                to_tsvector('simple',
-                    coalesce(f.name, '') || ' ' ||
-                    coalesce(f.signature, '') || ' ' ||
-                    coalesce(f.docstring, '') || ' ' ||
-                    coalesce(f.explanation_simple, '') || ' ' ||
-                    coalesce(f.explanation_logic, '') || ' ' ||
-                    coalesce(f.ai_purpose, '') || ' ' ||
-                    coalesce(f.code_snippet, '')
-                ),
-                websearch_to_tsquery('simple', :query)
+                {_weighted_tsvector()},
+                websearch_to_tsquery('english', :query)
             ) AS rank
         FROM functions f
         JOIN files fl ON fl.id = f.file_id
         JOIN projects p ON p.id = fl.project_id
         WHERE
             {where_clause}
-            AND to_tsvector('simple',
-                coalesce(f.name, '') || ' ' ||
-                coalesce(f.signature, '') || ' ' ||
-                coalesce(f.docstring, '') || ' ' ||
-                coalesce(f.explanation_simple, '') || ' ' ||
-                coalesce(f.explanation_logic, '') || ' ' ||
-                coalesce(f.ai_purpose, '') || ' ' ||
-                coalesce(f.code_snippet, '')
-            ) @@ websearch_to_tsquery('simple', :query)
+            AND {_weighted_tsvector()} @@ websearch_to_tsquery('english', :query)
         ORDER BY rank DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
     """)
 
     params["limit"] = limit
+    params["offset"] = offset
 
     rows = db.execute(sql, params).fetchall()
 
@@ -468,8 +484,10 @@ def search_classes(
     language: str | None = None,
     project_id: int | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[dict]:
-    """Full-text search across analyzed classes."""
+    """Full-text search across analyzed classes with field weighting and identifier splitting."""
+    query = _split_query(query)  # Split camelCase/snake_case for matching
     if not query or not query.strip():
         return []
 
@@ -509,34 +527,21 @@ def search_classes(
             p.id AS project_id,
             p.name AS project_name,
             ts_rank(
-                to_tsvector('simple',
-                    coalesce(c.name, '') || ' ' ||
-                    coalesce(c.docstring, '') || ' ' ||
-                    coalesce(c.explanation_simple, '') || ' ' ||
-                    coalesce(c.explanation_architecture, '') || ' ' ||
-                    coalesce(c.ai_purpose, '') || ' ' ||
-                    coalesce(c.code_snippet, '')
-                ),
-                websearch_to_tsquery('simple', :query)
+                {_class_weighted_tsvector()},
+                websearch_to_tsquery('english', :query)
             ) AS rank
         FROM classes c
         JOIN files fl ON fl.id = c.file_id
         JOIN projects p ON p.id = fl.project_id
         WHERE
             {where_clause}
-            AND to_tsvector('simple',
-                coalesce(c.name, '') || ' ' ||
-                coalesce(c.docstring, '') || ' ' ||
-                coalesce(c.explanation_simple, '') || ' ' ||
-                coalesce(c.explanation_architecture, '') || ' ' ||
-                coalesce(c.ai_purpose, '') || ' ' ||
-                coalesce(c.code_snippet, '')
-            ) @@ websearch_to_tsquery('simple', :query)
+            AND {_class_weighted_tsvector()} @@ websearch_to_tsquery('english', :query)
         ORDER BY rank DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
     """)
 
     params["limit"] = limit
+    params["offset"] = offset
     rows = db.execute(sql, params).fetchall()
 
     return [

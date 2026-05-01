@@ -14,7 +14,9 @@ from api.parsers import detect_and_parse, detect_language, SUPPORTED_EXTENSIONS
 from api.celery_app import celery_app
 from api.config import config
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from api.llm_service import generate_ai_metadata_batch
+from api.llm_service import generate_ai_metadata_batch, lookup_cached_metadata
+from api.embedding_service import generate_function_embeddings_batch, is_enabled as embedding_enabled
+from api.sse import publish_progress
 
 # 数据库引擎和会话工厂（用于独立创建 session，避免依赖 FastAPI 的 get_db）
 engine = create_engine(
@@ -123,6 +125,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
         if not is_resuming or not task.project_id:
             crud.update_task_status(db, task_id, "running", current_step="cloning", progress_percent=10)
             self.update_state(state='PROGRESS', meta={'current_step': 'cloning', 'progress': 10})
+            publish_progress(task_id, "cloning", 10, "cloning repository")
 
         # 获取或创建仓库目录（支持断点续传）
         existing_project = None
@@ -225,6 +228,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
         if not is_resuming or task.current_step != "parsing":
             crud.update_task_status(db, task_id, "running", current_step="parsing", progress_percent=30)
             self.update_state(state='PROGRESS', meta={'current_step': 'parsing', 'progress': 30})
+            publish_progress(task_id, "parsing", 30, "parsing source files")
 
         # 遍历所有支持的文件
         supported_exts = tuple(SUPPORTED_EXTENSIONS.keys())
@@ -264,6 +268,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
             })
             crud.update_task_status(db, task_id, "running", current_step=f'analyzing {rel_path}',
                                     progress_percent=int(progress))
+            publish_progress(task_id, "analyzing", int(progress), current_step=f"analyzing {rel_path}")
 
             # 计算文件hash
             with open(full_path, "rb") as f:
@@ -337,6 +342,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                     func_work_items.append({
                         "func": func,
                         "code_snippet": code_snippet,
+                        "code_hash": hashlib.md5(code_snippet.encode('utf-8')).hexdigest(),
                         "existing_func": existing_func,
                         "lang": lang,
                         "needs_ai": needs_ai,
@@ -346,6 +352,27 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                 except Exception as e:
                     print(f"❌ 准备函数 {func.get('name', 'unknown')} 失败: {e}")
                     continue
+
+            # ── Check cache for LLM results before making API calls ──
+            for w in func_work_items:
+                if w["needs_ai"]:
+                    cached = lookup_cached_metadata(db, w["code_hash"], "ai")
+                    if cached:
+                        w["cached_ai"] = cached
+                        w["needs_ai"] = False
+                        print(f"📦 缓存命中(AI): {w['func']['name']}")
+                if w["needs_beginner"]:
+                    cached = lookup_cached_metadata(db, w["code_hash"], "beginner")
+                    if cached:
+                        w["cached_beginner"] = cached
+                        w["needs_beginner"] = False
+                        print(f"📦 缓存命中(Beginner): {w['func']['name']}")
+                if w["needs_expert"]:
+                    cached = lookup_cached_metadata(db, w["code_hash"], "expert")
+                    if cached:
+                        w["cached_expert"] = cached
+                        w["needs_expert"] = False
+                        print(f"📦 缓存命中(Expert): {w['func']['name']}")
 
             # ── Batch process AI metadata in parallel ──
             ai_inputs = [(w["code_snippet"], "function", w["lang"]) for w in func_work_items if w["needs_ai"]]
@@ -371,17 +398,37 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
             beginner_iter = iter(beginner_outputs)
             expert_iter = iter(expert_outputs)
 
+            # Helper to get result: check cache first, then fall back to batch LLM output
+            def _get_ai_result(w: dict) -> dict | None:
+                if "cached_ai" in w:
+                    return w["cached_ai"]
+                if w["needs_ai"]:
+                    return next(ai_iter, {})
+                return None
+
+            def _get_beginner_result(w: dict) -> dict | None:
+                if "cached_beginner" in w:
+                    return w["cached_beginner"]
+                if w["needs_beginner"]:
+                    return next(beginner_iter, {})
+                return None
+
+            def _get_expert_result(w: dict) -> dict | None:
+                if "cached_expert" in w:
+                    return w["cached_expert"]
+                if w["needs_expert"]:
+                    return next(expert_iter, {})
+                return None
+
             # ── Create/update DB records with parallel results ──
             for work_item in func_work_items:
                 func = work_item["func"]
                 code_snippet = work_item["code_snippet"]
+                code_hash = work_item["code_hash"]
                 existing_func = work_item["existing_func"]
 
                 try:
-                    if work_item["needs_ai"]:
-                        ai_meta = next(ai_iter, {})
-                    else:
-                        ai_meta = None
+                    ai_meta = _get_ai_result(work_item)
 
                     # Case 1: Update existing function
                     if existing_func and existing_func.ai_purpose:
@@ -394,18 +441,20 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                             existing_func.return_type = ai_meta.get("outputs", {}).get("type") if ai_meta.get("outputs") else None
                             existing_func.code_snippet = code_snippet
 
-                        if work_item["needs_beginner"]:
-                            explanation = next(beginner_iter, {})
-                            existing_func.explanation_simple = explanation.get("simple")
-                            existing_func.explanation_logic = explanation.get("logic")
-                        elif work_item["needs_expert"]:
-                            expert = next(expert_iter, {})
-                            existing_func.expert_purpose = expert.get("purpose")
-                            existing_func.expert_tech_details = expert.get("tech_details")
-                            existing_func.expert_error_handling = expert.get("error_handling")
-                            existing_func.expert_concurrency = expert.get("concurrency")
-                            existing_func.expert_tradeoffs = expert.get("tradeoffs")
+                        beginner_result = _get_beginner_result(work_item)
+                        if beginner_result:
+                            existing_func.explanation_simple = beginner_result.get("simple")
+                            existing_func.explanation_logic = beginner_result.get("logic")
 
+                        expert_result = _get_expert_result(work_item)
+                        if expert_result:
+                            existing_func.expert_purpose = expert_result.get("purpose")
+                            existing_func.expert_tech_details = expert_result.get("tech_details")
+                            existing_func.expert_error_handling = expert_result.get("error_handling")
+                            existing_func.expert_concurrency = expert_result.get("concurrency")
+                            existing_func.expert_tradeoffs = expert_result.get("tradeoffs")
+
+                        existing_func.code_hash = code_hash
                         db.commit()
                         continue
 
@@ -422,6 +471,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                         func["start_line"], func["end_line"],
                         func["docstring"],
                         code_snippet=code_snippet,
+                        code_hash=code_hash,
                         ai_purpose=ai_purpose,
                         ai_inputs=ai_inputs_val,
                         ai_outputs=ai_outputs_val,
@@ -430,31 +480,63 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                         language=lang
                     )
 
-                    if work_item["needs_beginner"]:
+                    beginner_result = _get_beginner_result(work_item)
+                    if beginner_result:
                         try:
-                            explanation = next(beginner_iter, {})
                             crud.update_function_explanation(
                                 db, created_func.id,
-                                explanation.get("simple"), explanation.get("logic")
+                                beginner_result.get("simple"), beginner_result.get("logic")
                             )
                         except Exception as ex:
                             print(f"⚠️ 生成小白解释失败 {func['name']}: {ex}")
-                    elif work_item["needs_expert"]:
+
+                    expert_result = _get_expert_result(work_item)
+                    if expert_result:
                         try:
-                            expert = next(expert_iter, {})
                             crud.update_function_expert(
                                 db, created_func.id,
-                                expert_purpose=expert.get("purpose"),
-                                expert_tech_details=expert.get("tech_details"),
-                                expert_error_handling=expert.get("error_handling"),
-                                expert_concurrency=expert.get("concurrency"),
-                                expert_tradeoffs=expert.get("tradeoffs"),
+                                expert_purpose=expert_result.get("purpose"),
+                                expert_tech_details=expert_result.get("tech_details"),
+                                expert_error_handling=expert_result.get("error_handling"),
+                                expert_concurrency=expert_result.get("concurrency"),
+                                expert_tradeoffs=expert_result.get("tradeoffs"),
                             )
                         except Exception as ex:
                             print(f"⚠️ 生成专家分析失败 {func['name']}: {ex}")
                 except Exception as e:
                     print(f"❌ 处理函数 {func.get('name', 'unknown')} 失败: {e}")
                     continue
+
+            # ── Generate embeddings for newly created functions ──
+            if embedding_enabled():
+                pending = []
+                for func_entry in parse_result.get("functions", []):
+                    try:
+                        db_func = db.query(models.Function).filter(
+                            models.Function.file_id == file_obj.id,
+                            models.Function.name == func_entry["name"],
+                            models.Function.start_line == func_entry["start_line"]
+                        ).first()
+                        if db_func and db_func.embedding is None:
+                            pending.append(db_func)
+                    except Exception:
+                        pass
+                if pending:
+                    func_data_list = [{
+                        "name": f.name,
+                        "signature": f.signature,
+                        "docstring": f.docstring,
+                        "code_snippet": f.code_snippet,
+                        "ai_purpose": f.ai_purpose,
+                    } for f in pending]
+                    embeddings = generate_function_embeddings_batch(func_data_list)
+                    for func_obj, emb in zip(pending, embeddings):
+                        if emb is not None:
+                            func_obj.embedding = emb
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
 
             # ── Collect class work items ──
             class_work_items = []
@@ -464,11 +546,13 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                         lines = f.readlines()
                         code_snippet = ''.join(lines[cls["start_line"] - 1:cls["end_line"]])
 
-                    # Create function records for methods (no LLM needed)
+                    # Create function records for methods with code_snippet and language
                     for method in cls["methods"]:
+                        method_snippet = ''.join(lines[method["start_line"] - 1:method["end_line"]])
                         crud.create_function(
                             db, file_obj.id, method["name"], method["signature"],
-                            method["start_line"], method["end_line"], method["docstring"]
+                            method["start_line"], method["end_line"], method["docstring"],
+                            code_snippet=method_snippet, language=lang
                         )
 
                     existing_class = db.query(models.Class).filter(
@@ -631,6 +715,36 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                 print(f"❌ 存储调用关系失败: {e}")
                 # 不中断主流程
 
+            # ---- 存储 IMPORTS 导入关系 ----
+            try:
+                if parse_result.get("imports") and name_to_id:
+                    first_func_id = list(name_to_id.values())[0]
+                    for imp in parse_result["imports"]:
+                        try:
+                            crud.create_relationship(
+                                db, first_func_id, imp["target"],
+                                None, "IMPORTS", 3, imp.get("line")
+                            )
+                        except Exception:
+                            pass  # 单个导入失败不中断
+            except Exception as e:
+                print(f"⚠️ 存储导入关系失败: {e}")
+
+            # ---- 存储 EXTENDS 继承关系 ----
+            try:
+                for ext in parse_result.get("extends", []):
+                    source_id = name_to_id.get(ext["class"])
+                    if source_id:
+                        try:
+                            crud.create_relationship(
+                                db, source_id, ext["parent"],
+                                None, "EXTENDS", 5, ext.get("line")
+                            )
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"⚠️ 存储继承关系失败: {e}")
+
             # 保存检查点：标记当前文件为已处理
             processed_files.add(rel_path)
             save_checkpoint(db, task_id, list(processed_files), rel_path, total_files)
@@ -639,6 +753,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
         # 所有文件解析完成，准备生成整体解读，进度85%
         crud.update_task_status(db, task_id, "running", current_step="generating_overview", progress_percent=85)
         self.update_state(state='PROGRESS', meta={'current_step': 'generating_overview', 'progress': 85})
+        publish_progress(task_id, "generating_overview", 85, "generating project overview")
 
         # 检查是否已存在整体解读
         if not project.overview_analysis or is_resuming:
@@ -681,12 +796,14 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
         # 生成报告，进度90%
         self.update_state(state='PROGRESS', meta={'current_step': 'generating_report', 'progress': 90})
         crud.update_task_status(db, task_id, "running", current_step="generating_report", progress_percent=90)
+        publish_progress(task_id, "generating_report", 90, "generating project report")
 
         report_path = os.path.join(config.TEMP_DIR, f"report_{task_id}.md")
         report_generator.generate_project_report(db, project.id, report_path)
 
         # 任务完成，进度100%
         crud.update_task_status(db, task_id, "completed", progress_percent=100)
+        publish_progress(task_id, "completed", 100, "analysis complete")
 
         # 清空检查点数据（任务已完成，不再需要）
         task.processed_files = []
@@ -707,6 +824,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                             last_file=locals().get('rel_path'), total_files=locals().get('total_files'))
 
         crud.update_task_status(db, task_id, "failed", error_message=error_msg)
+        publish_progress(task_id, "failed", 0, current_step=f"failed: {error_msg[:100]}")
         raise e
     finally:
         db.rollback()

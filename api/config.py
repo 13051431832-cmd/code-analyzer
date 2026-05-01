@@ -28,6 +28,13 @@ class Config:
         self.TEMP_DIR = os.getenv("TEMP_DIR", "/tmp/code_analysis")
         self.API_KEYS = json.loads(os.getenv("API_KEYS", '{"mvp_key": "default_project"}'))
 
+        # 嵌入向量配置
+        self.EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY") or self.LLM_API_KEY
+        self.EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1")
+        self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        self.EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+        self.EMBEDDING_ENABLED = os.getenv("EMBEDDING_ENABLED", "true").lower() in ("true", "1", "yes")
+
         # 搜索配置
         self.SEARCH_DEFAULT_LIMIT = int(os.getenv("SEARCH_DEFAULT_LIMIT", "20"))
         self.SEARCH_MAX_LIMIT = int(os.getenv("SEARCH_MAX_LIMIT", "100"))

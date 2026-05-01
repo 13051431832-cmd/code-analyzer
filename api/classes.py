@@ -22,16 +22,18 @@ def search_classes_endpoint(
     language: str | None = Query(None, description="Filter by language"),
     project_id: int | None = Query(None, description="Filter by project ID"),
     limit: int = Query(20, ge=1, le=100, description="Max results"),
+    offset: int = Query(0, ge=0, description="Result offset for pagination"),
     db: Session = Depends(get_db),
 ):
     """Full-text search across analyzed classes by name, docstring, and code."""
     results = search_classes(
-        db, query=q, language=language, project_id=project_id, limit=limit
+        db, query=q, language=language, project_id=project_id, limit=limit, offset=offset
     )
     return {
         "results": results,
         "total": len(results),
         "query": q,
+        "pagination": {"limit": limit, "offset": offset, "has_more": len(results) == limit},
     }
 
 

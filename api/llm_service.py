@@ -4,8 +4,16 @@ from openai import OpenAI
 from .config import config
 
 import concurrent.futures
+from typing import TYPE_CHECKING
 
-client = OpenAI(api_key=config.LLM_API_KEY, base_url=config.LLM_BASE_URL)
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+client = OpenAI(
+    api_key=config.LLM_API_KEY,
+    base_url=config.LLM_BASE_URL,
+    max_retries=2,  # Auto-retry on transient failures (timeout, 429, 500)
+)
 
 
 # ---- Human-oriented explanations (kept for backward compatibility) ----
@@ -138,6 +146,98 @@ EXPERT_CLASS_SYSTEM_PROMPT = """
 """
 
 
+def lookup_cached_metadata(db: "Session", code_hash: str | None, content_type: str = "ai") -> dict | None:
+    """
+    Look up existing LLM results from any function with the same code_hash.
+    Avoids redundant API calls when identical code appears in multiple projects.
+    """
+    if not db or not code_hash:
+        return None
+    from . import models
+
+    cached = (
+        db.query(models.Function)
+        .filter(models.Function.code_hash == code_hash)
+        .first()
+    )
+    if not cached:
+        return None
+
+    if content_type == "ai" and cached.ai_purpose:
+        return {
+            "purpose": cached.ai_purpose,
+            "inputs": cached.ai_inputs or [],
+            "outputs": cached.ai_outputs or {"type": "unknown", "description": ""},
+            "side_effects": cached.ai_side_effects or [],
+        }
+    if content_type == "beginner" and cached.explanation_simple:
+        return {
+            "simple": cached.explanation_simple,
+            "logic": cached.explanation_logic or "",
+        }
+    if content_type == "expert" and cached.expert_purpose:
+        return {
+            "purpose": cached.expert_purpose,
+            "tech_details": cached.expert_tech_details,
+            "error_handling": cached.expert_error_handling,
+            "concurrency": cached.expert_concurrency,
+            "tradeoffs": cached.expert_tradeoffs,
+        }
+    return None
+
+
+def _validate_ai_metadata(result: dict, code_type: str) -> dict:
+    """Validate and normalize LLM output structure to prevent type errors downstream."""
+    if code_type == "function":
+        # purpose: must be string
+        if not isinstance(result.get("purpose"), str):
+            result["purpose"] = ""
+        # inputs: must be list of dicts with name/type/description
+        inputs = result.get("inputs", [])
+        if not isinstance(inputs, list):
+            inputs = []
+        validated_inputs = []
+        for inp in inputs:
+            if isinstance(inp, dict) and "name" in inp:
+                validated_inputs.append({
+                    "name": str(inp.get("name", "")),
+                    "type": str(inp.get("type", "unknown")),
+                    "description": str(inp.get("description", "")),
+                })
+        result["inputs"] = validated_inputs
+        # outputs: must be dict with type/description
+        outputs = result.get("outputs", {})
+        if not isinstance(outputs, dict):
+            outputs = {"type": "unknown", "description": ""}
+        result["outputs"] = {
+            "type": str(outputs.get("type", "unknown")),
+            "description": str(outputs.get("description", "")),
+        }
+        # side_effects: must be list of strings
+        side_effects = result.get("side_effects", [])
+        if not isinstance(side_effects, list):
+            side_effects = []
+        result["side_effects"] = [str(s) for s in side_effects if s is not None]
+
+    elif code_type == "class":
+        if not isinstance(result.get("purpose"), str):
+            result["purpose"] = ""
+        interfaces = result.get("interfaces", [])
+        if not isinstance(interfaces, list):
+            interfaces = []
+        validated_interfaces = []
+        for iface in interfaces:
+            if isinstance(iface, dict):
+                validated_interfaces.append({
+                    "name": str(iface.get("name", "")),
+                    "type": str(iface.get("type", "")),
+                    "description": str(iface.get("description", "")),
+                })
+        result["interfaces"] = validated_interfaces
+
+    return result
+
+
 def generate_explanation(code_snippet: str, code_type: str = "function", language: str = "python") -> dict:
     """
     调用 LLM 生成代码解释 (human-oriented, kept for backward compatibility).
@@ -210,26 +310,27 @@ def generate_ai_metadata(code_snippet: str, code_type: str = "function", languag
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         json_str = json_match.group() if json_match else content
         result = json.loads(json_str)
+        result = _validate_ai_metadata(result, code_type)
 
         if code_type == "function":
             return {
-                "purpose": result.get("purpose", ""),
-                "inputs": result.get("inputs", []),
-                "outputs": result.get("outputs", {}),
-                "side_effects": result.get("side_effects", []),
+                "purpose": result["purpose"],
+                "inputs": result["inputs"],
+                "outputs": result["outputs"],
+                "side_effects": result["side_effects"],
             }
         else:
             return {
-                "purpose": result.get("purpose", ""),
-                "interfaces": result.get("interfaces", []),
+                "purpose": result["purpose"],
+                "interfaces": result["interfaces"],
             }
 
     except json.JSONDecodeError as e:
         print(f"[AI-Metadata] JSON decode error: {e}, raw: {content if 'content' in dir() else 'N/A'}")
-        return {"purpose": "", "inputs": [], "outputs": {}, "side_effects": []} if code_type == "function" else {"purpose": "", "interfaces": []}
+        return {"purpose": "", "inputs": [], "outputs": {"type": "unknown", "description": ""}, "side_effects": []} if code_type == "function" else {"purpose": "", "interfaces": []}
     except Exception as e:
         print(f"[AI-Metadata] Error: {e}")
-        return {"purpose": "", "inputs": [], "outputs": {}, "side_effects": []} if code_type == "function" else {"purpose": "", "interfaces": []}
+        return {"purpose": "", "inputs": [], "outputs": {"type": "unknown", "description": ""}, "side_effects": []} if code_type == "function" else {"purpose": "", "interfaces": []}
 
 
 def generate_expert_analysis(code_snippet: str, code_type: str = "function", language: str = "python") -> dict:

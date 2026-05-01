@@ -7,10 +7,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # 导入路由模块
-from . import projects, analyze, functions, search, relations, files, reanalyze, classes, ai
+from . import projects, analyze, functions, search, relations, files, reanalyze, classes, ai, sse
 from .database import engine, SessionLocal
 from .models import Base
 from . import crud, search_service
+from . import embedding_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,6 +52,16 @@ async def startup_event():
         Base.metadata.create_all(bind=engine)
         logger.info("✅ 数据库表已就绪")
 
+        # 通过 Alembic 运行结构化迁移（替代裸 ALTER TABLE）
+        try:
+            from alembic.config import Config as AlembicConfig
+            from alembic import command
+            alembic_cfg = AlembicConfig(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+            command.upgrade(alembic_cfg, "head")
+            logger.info("✅ Alembic 迁移已执行")
+        except Exception as e:
+            logger.warning(f"⚠️ Alembic 迁移执行出错: {e}")
+
         # 创建全文检索 GIN 索引（functions + classes）
         try:
             with engine.connect() as conn:
@@ -61,97 +72,15 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"⚠️ 创建全文检索索引时出错: {e}")
 
-        # 检查并添加断点续传相关字段（如果表已存在但字段缺失）
+        # 创建 pgvector 扩展 + 嵌入向量索引
         try:
-            from sqlalchemy import inspect, text as sql_text
-            inspector = inspect(engine)
-            columns = [col['name'] for col in inspector.get_columns('analysis_tasks')]
-
             with engine.connect() as conn:
-                if 'processed_files' not in columns:
-                    conn.execute(sql_text(
-                        "ALTER TABLE analysis_tasks ADD COLUMN IF NOT EXISTS processed_files JSONB DEFAULT '[]'"))
-                    logger.info("✅ 添加 processed_files 字段")
-                if 'last_processed_file' not in columns:
-                    conn.execute(sql_text(
-                        "ALTER TABLE analysis_tasks ADD COLUMN IF NOT EXISTS last_processed_file VARCHAR(500)"))
-                    logger.info("✅ 添加 last_processed_file 字段")
-                if 'total_files' not in columns:
-                    conn.execute(
-                        sql_text("ALTER TABLE analysis_tasks ADD COLUMN IF NOT EXISTS total_files INTEGER DEFAULT 0"))
-                    logger.info("✅ 添加 total_files 字段")
-                if 'checkpoint_data' not in columns:
-                    conn.execute(sql_text("ALTER TABLE analysis_tasks ADD COLUMN IF NOT EXISTS checkpoint_data JSONB"))
-                    logger.info("✅ 添加 checkpoint_data 字段")
+                conn.execute(text(embedding_service.get_extension_sql()))
+                conn.execute(text(embedding_service.get_ivfflat_index_sql()))
                 conn.commit()
+            logger.info("✅ pgvector 扩展 + 嵌入索引已就绪")
         except Exception as e:
-            logger.warning(f"⚠️ 检查/添加字段时出错: {e}")
-
-        # 检查并添加 analysis_mode 字段到 projects 表
-        try:
-            project_columns = [col['name'] for col in inspect(engine).get_columns('projects')]
-            with engine.connect() as conn:
-                if 'analysis_mode' not in project_columns:
-                    conn.execute(sql_text(
-                        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS analysis_mode VARCHAR(20) DEFAULT 'ai'"))
-                    logger.info("✅ 添加 projects.analysis_mode 字段")
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"⚠️ 检查/添加 projects.analysis_mode 字段时出错: {e}")
-
-        # 检查并添加 AI-oriented 新字段
-        try:
-            inspector = inspect(engine)
-            func_columns = [col['name'] for col in inspector.get_columns('functions')]
-
-            with engine.connect() as conn:
-                if 'ai_purpose' not in func_columns:
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS ai_purpose TEXT"))
-                    logger.info("✅ 添加 functions.ai_purpose 字段")
-                if 'ai_inputs' not in func_columns:
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS ai_inputs JSONB"))
-                    logger.info("✅ 添加 functions.ai_inputs 字段")
-                if 'ai_outputs' not in func_columns:
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS ai_outputs JSONB"))
-                    logger.info("✅ 添加 functions.ai_outputs 字段")
-                if 'ai_side_effects' not in func_columns:
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS ai_side_effects JSONB"))
-                    logger.info("✅ 添加 functions.ai_side_effects 字段")
-                if 'return_type' not in func_columns:
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS return_type VARCHAR(255)"))
-                    logger.info("✅ 添加 functions.return_type 字段")
-                # Expert mode fields
-                if 'expert_purpose' not in func_columns:
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS expert_purpose TEXT"))
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS expert_tech_details TEXT"))
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS expert_error_handling TEXT"))
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS expert_concurrency TEXT"))
-                    conn.execute(sql_text("ALTER TABLE functions ADD COLUMN IF NOT EXISTS expert_tradeoffs TEXT"))
-                    logger.info("✅ 添加 functions expert 模式字段")
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"⚠️ 检查/添加 functions AI 字段时出错: {e}")
-
-        # Check class columns
-        try:
-            class_columns = [col['name'] for col in inspect(engine).get_columns('classes')]
-            with engine.connect() as conn:
-                if 'ai_purpose' not in class_columns:
-                    conn.execute(sql_text("ALTER TABLE classes ADD COLUMN IF NOT EXISTS ai_purpose TEXT"))
-                    logger.info("✅ 添加 classes.ai_purpose 字段")
-                if 'ai_interfaces' not in class_columns:
-                    conn.execute(sql_text("ALTER TABLE classes ADD COLUMN IF NOT EXISTS ai_interfaces JSONB"))
-                    logger.info("✅ 添加 classes.ai_interfaces 字段")
-                # Expert mode fields for classes
-                if 'expert_purpose' not in class_columns:
-                    conn.execute(sql_text("ALTER TABLE classes ADD COLUMN IF NOT EXISTS expert_purpose TEXT"))
-                    conn.execute(sql_text("ALTER TABLE classes ADD COLUMN IF NOT EXISTS expert_architecture TEXT"))
-                    conn.execute(sql_text("ALTER TABLE classes ADD COLUMN IF NOT EXISTS expert_responsibilities TEXT"))
-                    conn.execute(sql_text("ALTER TABLE classes ADD COLUMN IF NOT EXISTS expert_extension_points TEXT"))
-                    logger.info("✅ 添加 classes expert 模式字段")
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"⚠️ 检查/添加 classes AI 字段时出错: {e}")
+            logger.warning(f"⚠️ 创建 pgvector 扩展/索引时出错: {e}")
 
     except Exception as e:
         logger.error(f"❌ 数据库表初始化失败: {e}")
@@ -294,6 +223,7 @@ app.include_router(files.router, prefix="/api", tags=["files"])
 app.include_router(reanalyze.router, prefix="/api", tags=["reanalyze"])
 app.include_router(classes.router, prefix="/api", tags=["classes"])
 app.include_router(ai.router, prefix="/api", tags=["ai"])
+app.include_router(sse.router, prefix="/api", tags=["sse"])
 
 
 # 全局异常处理

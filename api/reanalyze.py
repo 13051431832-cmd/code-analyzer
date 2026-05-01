@@ -110,6 +110,12 @@ def _get_repo_root(project: models.Project) -> str | None:
 
     # GitHub URLs — repo might be cloned in a known location
     if "github.com" in url:
+        # Check repo_{id} in TEMP_DIR first (most common for recently analyzed projects)
+        from .config import config as app_config
+        repo_in_temp = os.path.join(app_config.TEMP_DIR, f"repo_{project.id}")
+        if os.path.isdir(repo_in_temp):
+            return repo_in_temp
+
         # Check /king_analysis/ dirs by project name
         repo_name = project.name.replace("-main", "").replace("_main", "")
         candidates = [
@@ -1483,4 +1489,465 @@ def batch_migrate_project_modes(
         "projects_triggered": triggered,
         "total_projects": len(projects),
         "results": results,
+    }
+
+
+# ── Reparse endpoint (apply improved parsers retroactively) ──
+
+
+@router.post("/reanalyze/project/{project_id}/reparse")
+def reparse_project_files(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Re-parse all files in a project using the latest parsers (tree-sitter for JS/TS,
+    improved regex for Go/Java/Rust, AST for Python).
+
+    Preserves AI metadata by matching on code_hash. Zero AI cost — only parsing.
+    Creates IMPORTS/EXTENDS relationships that older analyses might be missing.
+    """
+    import hashlib
+    from api.parsers import detect_and_parse
+
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    repo_root = _get_repo_root(project)
+    if not repo_root:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot locate source repository for project '{project.name}'",
+        )
+
+    files = crud.get_files_by_project(db, project_id)
+    parsed = 0
+    skipped = 0
+    errors = 0
+    funcs_created = 0
+    funcs_preserved = 0
+    imp_ext_created = 0
+    file_results = []
+
+    for file_obj in files:
+        full_path = os.path.join(repo_root, file_obj.file_path)
+        if not os.path.isfile(full_path):
+            file_results.append({
+                "file_path": file_obj.file_path,
+                "status": "skipped",
+                "reason": "source file not found",
+            })
+            skipped += 1
+            continue
+
+        try:
+            # 1. Compute new file_hash
+            with open(full_path, "rb") as f:
+                new_file_hash = hashlib.md5(f.read()).hexdigest()
+
+            # 2. Re-parse with the latest parsers
+            parse_result = detect_and_parse(full_path)
+
+            # 3. Compute code_hash for each function and check for preserved AI metadata
+            with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+
+            # Build lookup: old functions by (name, start_line) -> Function
+            old_funcs = {}
+            for f_old in (
+                db.query(models.Function)
+                .filter(models.Function.file_id == file_obj.id)
+                .all()
+            ):
+                old_funcs[(f_old.name, f_old.start_line)] = f_old
+
+            # 4. Delete OLD function/class/relationship records
+            old_func_ids = [f.id for f in old_funcs.values()]
+            if old_func_ids:
+                db.query(models.FunctionRelationship).filter(
+                    models.FunctionRelationship.source_function_id.in_(old_func_ids)
+                ).delete(synchronize_session=False)
+            db.query(models.Function).filter(
+                models.Function.file_id == file_obj.id
+            ).delete(synchronize_session=False)
+            db.query(models.Class).filter(
+                models.Class.file_id == file_obj.id
+            ).delete(synchronize_session=False)
+
+            # 5. Create new file record (if hash changed)
+            if new_file_hash != file_obj.file_hash:
+                file_obj.file_hash = new_file_hash
+                file_obj.size_bytes = os.path.getsize(full_path)
+                db.flush()
+
+            # 6. Create new function records, preserving AI metadata
+            name_to_id = {}
+            for func in parse_result.get("functions", []):
+                code_snippet = "".join(lines[func["start_line"] - 1 : func["end_line"]])
+                code_hash = hashlib.md5(code_snippet.encode("utf-8")).hexdigest()
+
+                # Check if we have an old function to preserve AI metadata from
+                preserved_meta = {}
+                old_match = old_funcs.get((func["name"], func["start_line"]))
+                if old_match and old_match.code_hash == code_hash:
+                    # Exact match — preserve all AI metadata
+                    preserved_meta = {
+                        "ai_purpose": old_match.ai_purpose,
+                        "ai_inputs": old_match.ai_inputs,
+                        "ai_outputs": old_match.ai_outputs,
+                        "ai_side_effects": old_match.ai_side_effects,
+                        "return_type": old_match.return_type,
+                        "explanation_simple": old_match.explanation_simple,
+                        "explanation_logic": old_match.explanation_logic,
+                        "expert_purpose": old_match.expert_purpose,
+                        "expert_tech_details": old_match.expert_tech_details,
+                        "expert_error_handling": old_match.expert_error_handling,
+                        "expert_concurrency": old_match.expert_concurrency,
+                        "expert_tradeoffs": old_match.expert_tradeoffs,
+                        "code_hash": code_hash,
+                    }
+                    funcs_preserved += 1
+                else:
+                    # No exact match — check if any function with same code_hash exists
+                    cached = db.query(models.Function).filter(
+                        models.Function.code_hash == code_hash,
+                        models.Function.ai_purpose.isnot(None),
+                    ).first()
+                    if cached:
+                        preserved_meta = {
+                            "ai_purpose": cached.ai_purpose,
+                            "ai_inputs": cached.ai_inputs,
+                            "ai_outputs": cached.ai_outputs,
+                            "ai_side_effects": cached.ai_side_effects,
+                            "return_type": cached.return_type,
+                            "code_hash": code_hash,
+                        }
+                        funcs_preserved += 1
+                    else:
+                        preserved_meta = {"code_hash": code_hash}
+
+                # Also check code_hash for beginner/expert metadata
+                if not preserved_meta.get("explanation_simple"):
+                    cached_beginner = db.query(models.Function).filter(
+                        models.Function.code_hash == code_hash,
+                        models.Function.explanation_simple.isnot(None),
+                    ).first()
+                    if cached_beginner:
+                        preserved_meta["explanation_simple"] = cached_beginner.explanation_simple
+                        preserved_meta["explanation_logic"] = cached_beginner.explanation_logic
+
+                if not preserved_meta.get("expert_purpose"):
+                    cached_expert = db.query(models.Function).filter(
+                        models.Function.code_hash == code_hash,
+                        models.Function.expert_purpose.isnot(None),
+                    ).first()
+                    if cached_expert:
+                        preserved_meta["expert_purpose"] = cached_expert.expert_purpose
+                        preserved_meta["expert_tech_details"] = cached_expert.expert_tech_details
+                        preserved_meta["expert_error_handling"] = cached_expert.expert_error_handling
+                        preserved_meta["expert_concurrency"] = cached_expert.expert_concurrency
+                        preserved_meta["expert_tradeoffs"] = cached_expert.expert_tradeoffs
+
+                created_func = crud.create_function(
+                    db, file_obj.id,
+                    func["name"], func["signature"],
+                    func["start_line"], func["end_line"],
+                    func["docstring"],
+                    code_snippet=code_snippet,
+                    language=file_obj.language,
+                    **preserved_meta,
+                )
+                name_to_id[func["name"]] = created_func.id
+                funcs_created += 1
+
+            # 7. Create IMPORTS relationships
+            for imp in parse_result.get("imports", []):
+                if name_to_id:
+                    first_id = next(iter(name_to_id.values()))
+                    try:
+                        crud.create_relationship(
+                            db, first_id, imp["target"],
+                            None, "IMPORTS", 3, imp.get("line"),
+                        )
+                        imp_ext_created += 1
+                    except Exception:
+                        pass
+
+            # 8. Create EXTENDS relationships
+            for ext in parse_result.get("extends", []):
+                source_id = name_to_id.get(ext["class"])
+                if source_id:
+                    try:
+                        crud.create_relationship(
+                            db, source_id, ext["parent"],
+                            None, "EXTENDS", 5, ext.get("line"),
+                        )
+                        imp_ext_created += 1
+                    except Exception:
+                        pass
+
+            # 9. Create class records
+            for cls in parse_result.get("classes", []):
+                cls_snippet = "".join(lines[cls["start_line"] - 1 : cls["end_line"]])
+                try:
+                    crud.create_class(
+                        db, file_obj.id,
+                        cls["name"], cls["start_line"], cls["end_line"],
+                        cls["docstring"],
+                        code_snippet=cls_snippet,
+                    )
+                except Exception:
+                    pass
+
+            # 10. Create function records for class methods
+            for cls in parse_result.get("classes", []):
+                for method in cls.get("methods", []):
+                    method_snippet = "".join(lines[method["start_line"] - 1 : method["end_line"]])
+                    try:
+                        crud.create_function(
+                            db, file_obj.id,
+                            method["name"], method["signature"],
+                            method["start_line"], method["end_line"],
+                            method["docstring"],
+                            code_snippet=method_snippet,
+                            language=file_obj.language,
+                        )
+                    except Exception:
+                        pass
+
+            db.commit()
+            parsed += 1
+            file_results.append({
+                "file_path": file_obj.file_path,
+                "status": "parsed",
+                "functions": len(parse_result.get("functions", [])),
+                "classes": len(parse_result.get("classes", [])),
+                "imports": len(parse_result.get("imports", [])),
+                "extends": len(parse_result.get("extends", [])),
+                "funcs_preserved": funcs_preserved,
+            })
+
+        except Exception as e:
+            db.rollback()
+            errors += 1
+            file_results.append({
+                "file_path": file_obj.file_path,
+                "status": "error",
+                "reason": str(e),
+            })
+
+    return {
+        "project_id": project_id,
+        "project_name": project.name,
+        "repo_root": repo_root,
+        "summary": {
+            "total_files": len(files),
+            "parsed": parsed,
+            "skipped": skipped,
+            "errors": errors,
+            "functions_created": funcs_created,
+            "functions_with_preserved_metadata": funcs_preserved,
+            "imp_ext_relationships_created": imp_ext_created,
+        },
+        "files": file_results[:200],
+    }
+
+
+@router.post("/reanalyze/reparse-all")
+def reparse_all_projects(
+    db: Session = Depends(get_db),
+):
+    """
+    Batch re-parse ALL projects using the latest parsers.
+
+    Applies tree-sitter (JS/TS), improved generic_parser (Go/Java/Rust),
+    and enhanced python_parser retroactively to every project.
+    Preserves existing AI metadata. Zero AI cost — only parsing.
+
+    Use this after parser improvements to upgrade all existing data in one call.
+    """
+    projects = db.query(models.Project).all()
+    total_parsed = 0
+    total_skipped = 0
+    total_errors = 0
+    total_funcs_created = 0
+    total_funcs_preserved = 0
+    project_results = []
+
+    for project in projects:
+        repo_root = _get_repo_root(project)
+        if not repo_root:
+            project_results.append({
+                "project_id": project.id,
+                "project_name": project.name,
+                "status": "skipped",
+                "reason": "source repo not accessible",
+            })
+            total_skipped += 1
+            continue
+
+        files = crud.get_files_by_project(db, project.id)
+        project_parsed = 0
+        project_errors = 0
+
+        for file_obj in files:
+            full_path = os.path.join(repo_root, file_obj.file_path)
+            if not os.path.isfile(full_path):
+                continue
+
+            try:
+                # Use the per-file logic from reparse_project_files
+                import hashlib
+                from api.parsers import detect_and_parse
+
+                with open(full_path, "rb") as f:
+                    new_file_hash = hashlib.md5(f.read()).hexdigest()
+
+                parse_result = detect_and_parse(full_path)
+
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+
+                # Look up old functions for AI metadata preservation
+                old_funcs = {}
+                for f_old in (
+                    db.query(models.Function)
+                    .filter(models.Function.file_id == file_obj.id)
+                    .all()
+                ):
+                    old_funcs[(f_old.name, f_old.start_line)] = f_old
+
+                # Delete old records
+                old_func_ids = [f.id for f in old_funcs.values()]
+                if old_func_ids:
+                    db.query(models.FunctionRelationship).filter(
+                        models.FunctionRelationship.source_function_id.in_(old_func_ids)
+                    ).delete(synchronize_session=False)
+                db.query(models.Function).filter(
+                    models.Function.file_id == file_obj.id
+                ).delete(synchronize_session=False)
+                db.query(models.Class).filter(
+                    models.Class.file_id == file_obj.id
+                ).delete(synchronize_session=False)
+
+                # Update file hash
+                if new_file_hash != file_obj.file_hash:
+                    file_obj.file_hash = new_file_hash
+                    db.flush()
+
+                # Create new function records
+                name_to_id = {}
+                for func in parse_result.get("functions", []):
+                    code_snippet = "".join(lines[func["start_line"] - 1 : func["end_line"]])
+                    code_hash = hashlib.md5(code_snippet.encode("utf-8")).hexdigest()
+
+                    preserved = {}
+                    old_match = old_funcs.get((func["name"], func["start_line"]))
+                    if old_match and old_match.code_hash == code_hash:
+                        preserved = {
+                            "ai_purpose": old_match.ai_purpose,
+                            "ai_inputs": old_match.ai_inputs,
+                            "ai_outputs": old_match.ai_outputs,
+                            "ai_side_effects": old_match.ai_side_effects,
+                            "return_type": old_match.return_type,
+                            "explanation_simple": old_match.explanation_simple,
+                            "explanation_logic": old_match.explanation_logic,
+                            "expert_purpose": old_match.expert_purpose,
+                            "expert_tech_details": old_match.expert_tech_details,
+                            "expert_error_handling": old_match.expert_error_handling,
+                            "expert_concurrency": old_match.expert_concurrency,
+                            "expert_tradeoffs": old_match.expert_tradeoffs,
+                        }
+                        total_funcs_preserved += 1
+                    else:
+                        # Cross-function code_hash match
+                        cached = db.query(models.Function).filter(
+                            models.Function.code_hash == code_hash,
+                            models.Function.ai_purpose.isnot(None),
+                        ).first()
+                        if cached:
+                            preserved = {
+                                "ai_purpose": cached.ai_purpose,
+                                "ai_inputs": cached.ai_inputs,
+                                "ai_outputs": cached.ai_outputs,
+                                "ai_side_effects": cached.ai_side_effects,
+                                "return_type": cached.return_type,
+                            }
+                            total_funcs_preserved += 1
+
+                    created_func = crud.create_function(
+                        db, file_obj.id,
+                        func["name"], func["signature"],
+                        func["start_line"], func["end_line"],
+                        func["docstring"],
+                        code_snippet=code_snippet,
+                        code_hash=code_hash,
+                        language=file_obj.language,
+                        **preserved,
+                    )
+                    name_to_id[func["name"]] = created_func.id
+                    total_funcs_created += 1
+
+                # IMPORTS
+                for imp in parse_result.get("imports", []):
+                    if name_to_id:
+                        first_id = next(iter(name_to_id.values()))
+                        try:
+                            crud.create_relationship(db, first_id, imp["target"], None, "IMPORTS", 3, imp.get("line"))
+                        except Exception:
+                            pass
+
+                # EXTENDS
+                for ext in parse_result.get("extends", []):
+                    source_id = name_to_id.get(ext["class"])
+                    if source_id:
+                        try:
+                            crud.create_relationship(db, source_id, ext["parent"], None, "EXTENDS", 5, ext.get("line"))
+                        except Exception:
+                            pass
+
+                # Classes and methods
+                for cls in parse_result.get("classes", []):
+                    cls_snippet = "".join(lines[cls["start_line"] - 1 : cls["end_line"]])
+                    try:
+                        crud.create_class(db, file_obj.id, cls["name"], cls["start_line"], cls["end_line"], cls["docstring"], code_snippet=cls_snippet)
+                    except Exception:
+                        pass
+                    for method in cls.get("methods", []):
+                        method_snippet = "".join(lines[method["start_line"] - 1 : method["end_line"]])
+                        try:
+                            crud.create_function(db, file_obj.id, method["name"], method["signature"], method["start_line"], method["end_line"], method["docstring"], code_snippet=method_snippet, language=file_obj.language)
+                        except Exception:
+                            pass
+
+                db.commit()
+                project_parsed += 1
+
+            except Exception:
+                db.rollback()
+                project_errors += 1
+
+        total_parsed += project_parsed
+        total_errors += project_errors
+        project_results.append({
+            "project_id": project.id,
+            "project_name": project.name,
+            "status": "processed",
+            "repo_root": repo_root,
+            "files_parsed": project_parsed,
+            "files_errors": project_errors,
+            "total_files": len(files),
+        })
+
+    return {
+        "summary": {
+            "total_projects": len(projects),
+            "processed": total_parsed + total_skipped - total_errors,
+            "skipped_source_not_found": total_skipped,
+            "errors": total_errors,
+            "functions_created": total_funcs_created,
+            "functions_with_preserved_metadata": total_funcs_preserved,
+        },
+        "projects": project_results,
     }
