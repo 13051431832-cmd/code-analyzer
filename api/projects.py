@@ -127,6 +127,7 @@ def get_all_project_stats(
         "classes": 0,
         "with_code_snippet": 0,
         "with_explanation": 0,
+        "with_ai_purpose": 0,
         "relationships": 0,
     }
 
@@ -143,13 +144,19 @@ def get_all_project_stats(
 
         with_snippet = funcs_q.filter(models.Function.code_snippet.isnot(None)).count() if file_ids else 0
         with_explain = funcs_q.filter(models.Function.explanation_simple.isnot(None)).count() if file_ids else 0
+        with_ai_purpose = funcs_q.filter(
+            models.Function.ai_purpose.isnot(None),
+            models.Function.ai_purpose != ""
+        ).count() if file_ids else 0
 
         if func_count > 0:
             snippet_pct = round(with_snippet / func_count * 100, 1)
             explain_pct = round(with_explain / func_count * 100, 1)
+            ai_purpose_pct = round(with_ai_purpose / func_count * 100, 1)
         else:
             snippet_pct = 0.0
             explain_pct = 0.0
+            ai_purpose_pct = 0.0
 
         project_list.append({
             "project_id": p.id,
@@ -160,8 +167,10 @@ def get_all_project_stats(
             "classes": class_count,
             "with_code_snippet": with_snippet,
             "with_explanation": with_explain,
+            "with_ai_purpose": with_ai_purpose,
             "snippet_coverage_pct": snippet_pct,
             "explanation_coverage_pct": explain_pct,
+            "ai_purpose_coverage_pct": ai_purpose_pct,
             "has_overview": p.overview_analysis is not None,
             "last_analyzed": str(p.updated_at or p.created_at) if p.updated_at or p.created_at else None,
         })
@@ -172,6 +181,7 @@ def get_all_project_stats(
         grand_total["classes"] += class_count
         grand_total["with_code_snippet"] += with_snippet
         grand_total["with_explanation"] += with_explain
+        grand_total["with_ai_purpose"] += with_ai_purpose
 
     from sqlalchemy import func as safunc
     grand_total["relationships"] = db.query(safunc.count(models.FunctionRelationship.id)).scalar() or 0
@@ -179,9 +189,11 @@ def get_all_project_stats(
     if grand_total["functions"] > 0:
         grand_total["snippet_coverage_pct"] = round(grand_total["with_code_snippet"] / grand_total["functions"] * 100, 1)
         grand_total["explanation_coverage_pct"] = round(grand_total["with_explanation"] / grand_total["functions"] * 100, 1)
+        grand_total["ai_purpose_coverage_pct"] = round(grand_total["with_ai_purpose"] / grand_total["functions"] * 100, 1)
     else:
         grand_total["snippet_coverage_pct"] = 0.0
         grand_total["explanation_coverage_pct"] = 0.0
+        grand_total["ai_purpose_coverage_pct"] = 0.0
 
     return {
         "summary": grand_total,

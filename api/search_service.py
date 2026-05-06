@@ -49,13 +49,16 @@ def _weighted_tsvector() -> str:
     Uses setweight() to prioritize name > signature/ai_purpose > docstring > code_snippet.
     Also splits camelCase and snake_case identifiers for better tokenization.
     """
+    # name/signature/code_snippet use 'english' (mostly code identifiers, good stemming).
+    # ai_purpose/explanation_*/docstring use 'simple' (Chinese/mixed-language content,
+    # avoids English stop-word removal that breaks Chinese compound tokens).
     return f"""
         setweight(to_tsvector('english', {_split_identifiers('f.name')}), 'A') ||
         setweight(to_tsvector('english', {_split_identifiers('f.signature')}), 'B') ||
-        setweight(to_tsvector('english', {_split_identifiers('f.docstring')}), 'C') ||
-        setweight(to_tsvector('english', {_split_identifiers('f.explanation_simple')}), 'C') ||
-        setweight(to_tsvector('english', {_split_identifiers('f.explanation_logic')}), 'C') ||
-        setweight(to_tsvector('english', {_split_identifiers('f.ai_purpose')}), 'B') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('f.docstring')}), 'C') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('f.explanation_simple')}), 'C') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('f.explanation_logic')}), 'C') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('f.ai_purpose')}), 'B') ||
         setweight(to_tsvector('english', {_split_identifiers('f.code_snippet')}), 'D')
     """
 
@@ -65,9 +68,9 @@ def _class_weighted_tsvector() -> str:
     return f"""
         setweight(to_tsvector('english', {_split_identifiers('c.name')}), 'A') ||
         setweight(to_tsvector('english', {_split_identifiers('c.docstring')}), 'B') ||
-        setweight(to_tsvector('english', {_split_identifiers('c.explanation_simple')}), 'C') ||
-        setweight(to_tsvector('english', {_split_identifiers('c.explanation_architecture')}), 'C') ||
-        setweight(to_tsvector('english', {_split_identifiers('c.ai_purpose')}), 'B') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('c.explanation_simple')}), 'C') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('c.explanation_architecture')}), 'C') ||
+        setweight(to_tsvector('simple',  {_split_identifiers('c.ai_purpose')}), 'B') ||
         setweight(to_tsvector('english', {_split_identifiers('c.code_snippet')}), 'D')
     """
 
@@ -77,7 +80,7 @@ def get_search_index_sql() -> str:
     return f"""
     CREATE INDEX IF NOT EXISTS ix_functions_search_text
     ON functions
-    USING GIN ({_weighted_tsvector()});
+    USING GIN (({_weighted_tsvector()}));
     """
 
 
@@ -86,9 +89,8 @@ def get_class_search_index_sql() -> str:
     return f"""
     CREATE INDEX IF NOT EXISTS ix_classes_search_text
     ON classes
-    USING GIN ({_class_weighted_tsvector()});
+    USING GIN (({_class_weighted_tsvector()}));
     """
-
 
 def _get_relationship_counts(db: Session, func_ids: list[int]) -> dict[int, dict]:
     """Get caller_count and callee_count for a list of function IDs."""

@@ -1003,3 +1003,151 @@ def fill_project_mode_content(self, project_id: int):
         raise e
     finally:
         db.close()
+
+
+@celery_app.task(bind=True, name="fill_ai_metadata_bulk")
+def fill_ai_metadata_bulk(self, project_ids: list[int], batch_size: int = 15, max_workers: int = 10):
+    """
+    Backfill AI metadata in bulk for multiple projects.
+
+    Uses generate_ai_metadata_bulk() to process 10-15 functions per LLM call,
+    with parallel ThreadPoolExecutor workers for much higher throughput
+    than per-function processing.
+
+    Args:
+        project_ids: List of project IDs to backfill.
+        batch_size: Functions per bulk LLM call (default 15).
+        max_workers: Parallel bulk call workers (default 10).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from api.llm_service import generate_ai_metadata_bulk
+
+    db = SessionLocal()
+    try:
+        projects = db.query(models.Project).filter(
+            models.Project.id.in_(project_ids)
+        ).all()
+
+        if not projects:
+            return {"status": "error", "message": f"No projects found: {project_ids}"}
+
+        total_ok = 0
+        total_err = 0
+
+        for proj in projects:
+            from sqlalchemy import or_
+            missing = (
+                db.query(models.Function)
+                .join(models.File)
+                .filter(
+                    models.File.project_id == proj.id,
+                    or_(
+                        models.Function.ai_purpose.is_(None),
+                        models.Function.ai_purpose == "",
+                    ),
+                    models.Function.code_snippet.isnot(None),
+                )
+                .all()
+            )
+
+            if not missing:
+                print(f"[{proj.name}] No missing AI metadata")
+                continue
+
+            print(f"[{proj.name}] Processing {len(missing)} functions "
+                  f"(batch_size={batch_size}, workers={max_workers})...")
+            processed = 0
+            errors = 0
+
+            # Build func-snippet pairs
+            all_items = []
+            for func in missing:
+                file_obj = db.query(models.File).filter(
+                    models.File.id == func.file_id
+                ).first()
+                lang = file_obj.language if file_obj else "python"
+                all_items.append((func, (func.code_snippet, "function", lang)))
+
+            # Process in chunks with periodic DB commit
+            chunk_size = batch_size * max_workers * 4
+            for chunk_start in range(0, len(all_items), chunk_size):
+                chunk = all_items[chunk_start:chunk_start + chunk_size]
+
+                # Group into sub-batches
+                sub_batches = []
+                for i in range(0, len(chunk), batch_size):
+                    batch_items = chunk[i:i + batch_size]
+                    funcs = [item[0] for item in batch_items]
+                    snippets = [item[1] for item in batch_items]
+                    sub_batches.append((funcs, snippets))
+
+                # Process sub-batches in parallel
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(_bulk_fill_worker, sb): sb
+                        for sb in sub_batches
+                    }
+                    for future in as_completed(futures):
+                        p, e = future.result()
+                        processed += p
+                        errors += e
+
+                done = min(chunk_start + chunk_size, len(all_items))
+                print(f"  [{proj.name}] {done}/{len(all_items)} - "
+                      f"{processed} ok, {errors} err")
+
+            total_ok += processed
+            total_err += errors
+            print(f"[{proj.name}] COMPLETE: {processed} ok, {errors} err")
+
+        return {
+            "status": "completed",
+            "processed": total_ok,
+            "errors": total_err,
+        }
+
+    except Exception as e:
+        print(f"❌ fill_ai_metadata_bulk failed: {e}")
+        raise e
+    finally:
+        db.close()
+
+
+def _bulk_fill_worker(args):
+    """Process a sub-batch of functions via bulk LLM.
+    Runs in its own thread with its own DB session."""
+    func_objects, snippets = args
+    from api.database import SessionLocal
+    from api import models
+    from api.llm_service import generate_ai_metadata_bulk
+
+    db = SessionLocal()
+    try:
+        results = generate_ai_metadata_bulk(snippets, batch_size=len(snippets))
+        processed = 0
+        errors = 0
+        for func_obj, ai_meta in zip(func_objects, results):
+            try:
+                func = db.query(models.Function).filter(
+                    models.Function.id == func_obj.id
+                ).first()
+                if func and ai_meta and ai_meta.get("purpose"):
+                    func.ai_purpose = ai_meta.get("purpose")
+                    func.ai_inputs = ai_meta.get("inputs")
+                    func.ai_outputs = ai_meta.get("outputs")
+                    func.ai_side_effects = ai_meta.get("side_effects")
+                    outputs = ai_meta.get("outputs", {})
+                    if outputs and isinstance(outputs, dict):
+                        func.return_type = outputs.get("type")
+                    processed += 1
+                else:
+                    errors += 1
+            except Exception:
+                errors += 1
+        db.commit()
+        return processed, errors
+    except Exception:
+        db.rollback()
+        return 0, len(func_objects)
+    finally:
+        db.close()

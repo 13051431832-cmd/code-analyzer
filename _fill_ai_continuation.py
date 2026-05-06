@@ -72,12 +72,16 @@ def fill_project_ai(project_ids, batch_size=10, max_workers=5, max_funcs=None):
         print(f"Found {len(projects)} projects to process")
 
         for proj in projects:
+            from sqlalchemy import or_
             missing = (
                 db.query(models.Function)
                 .join(models.File)
                 .filter(
                     models.File.project_id == proj.id,
-                    models.Function.ai_purpose.is_(None),
+                    or_(
+                        models.Function.ai_purpose.is_(None),
+                        models.Function.ai_purpose == "",
+                    ),
                     models.Function.code_snippet.isnot(None),
                 )
                 .all()
