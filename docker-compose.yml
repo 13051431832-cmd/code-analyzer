@@ -41,6 +41,7 @@ services:
       DATABASE_URL: postgresql://code_analyzer:password@postgres:5432/code_analyzer_db
       REDIS_URL: redis://redis:6379/0
       TEMP_DIR: /tmp/code_analysis
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,9 +58,15 @@ services:
       - temp_data:/tmp/code_analysis
       - /Users/jason/Downloads:/host_downloads:ro
       - /Users/jason/king_analysis:/king_analysis
+      # SSH key mount (for private repo cloning via SSH)
+      # - $SSH_AUTH_SOCK:/ssh-agent.sock
+      # - ~/.ssh:/root/.ssh:ro
     environment:
       DATABASE_URL: postgresql://code_analyzer:password@postgres:5432/code_analyzer_db
       REDIS_URL: redis://redis:6379/0
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GIT_TERMINAL_PROMPT: "0"
+      # SSH_AUTH_SOCK: /ssh-agent.sock
     depends_on:
       - api
       - redis

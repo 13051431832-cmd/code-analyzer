@@ -176,9 +176,17 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                 if not clone_url.endswith(".git"):
                     clone_url = clone_url + ".git"
 
-                # 可选：使用 GitHub 镜像加速
-                # if "github.com" in clone_url:
-                #     clone_url = clone_url.replace("https://github.com/", "https://ghproxy.com/https://github.com/")
+                # 支持私有仓库认证（通过 GITHUB_TOKEN 环境变量）
+                github_token = os.environ.get("GITHUB_TOKEN", "")
+                if github_token and "github.com" in clone_url and clone_url.startswith("https://"):
+                    # 在 URL 中嵌入 token：https://x-access-token:{token}@github.com/...
+                    clone_url = clone_url.replace("https://", f"https://x-access-token:{github_token}@")
+                    print(f"🔑 使用 GITHUB_TOKEN 认证克隆")
+                else:
+                    # 可选：使用 GitHub 镜像加速
+                    # if "github.com" in clone_url:
+                    #     clone_url = clone_url.replace("https://github.com/", "https://ghproxy.com/https://github.com/")
+                    pass
 
                 print(f"📥 克隆仓库: {clone_url}")
                 repo = Repo.clone_from(clone_url, temp_dir)
