@@ -762,3 +762,104 @@ def get_module_graph(db: Session, project_id: int) -> dict:
         "nodes": [{"module": m} for m in modules],
         "edges": sorted(edges.values(), key=lambda e: -e["count"]),
     }
+
+
+def get_class_hierarchy(db: Session, class_id: int) -> dict:
+    """
+    Get full inheritance hierarchy for a class.
+    Returns parents (what this class extends), children (what extends this class),
+    and interfaces (what this class implements).
+    """
+    cls = db.query(models.Class).filter(models.Class.id == class_id).first()
+    if not cls:
+        return {"class_id": class_id, "error": "Class not found"}
+
+    # Parents: from class_relationships where source_class_id = class_id (EXTENDS)
+    parents = []
+    for rel in db.query(models.ClassRelationship).filter(
+        models.ClassRelationship.source_class_id == class_id,
+        models.ClassRelationship.relationship_type == "EXTENDS",
+    ).all():
+        # Try to resolve parent to a target class in the same project
+        target_file = db.query(models.File).filter(
+            models.File.id == cls.file_id
+        ).first()
+        resolved = None
+        if target_file:
+            parent_class = db.query(models.Class).filter(
+                models.Class.name == rel.target_class_name,
+                models.Class.file_id.in_(
+                    db.query(models.File.id).filter(
+                        models.File.project_id == target_file.project_id
+                    )
+                )
+            ).first()
+            if parent_class:
+                resolved = {"class_id": parent_class.id, "file_id": parent_class.file_id}
+        parents.append({
+            "name": rel.target_class_name,
+            "line": rel.context_line,
+            "resolved": resolved,
+        })
+
+    # Children: classes that extend THIS class
+    children = []
+    child_rels = db.query(models.ClassRelationship).filter(
+        models.ClassRelationship.target_class_name == cls.name,
+        models.ClassRelationship.relationship_type == "EXTENDS",
+    ).all()
+    for rel in child_rels:
+        child_class = db.query(models.Class).filter(
+            models.Class.id == rel.source_class_id
+        ).first()
+        children.append({
+            "class_id": rel.source_class_id,
+            "name": child_class.name if child_class else None,
+            "line": rel.context_line,
+        })
+
+    # Interfaces: from class_relationships (IMPLEMENTS)
+    interfaces = []
+    for rel in db.query(models.ClassRelationship).filter(
+        models.ClassRelationship.source_class_id == class_id,
+        models.ClassRelationship.relationship_type == "IMPLEMENTS",
+    ).all():
+        interfaces.append({"name": rel.target_class_name, "line": rel.context_line})
+
+    return {
+        "class_id": class_id,
+        "name": cls.name,
+        "parents": parents,
+        "children": children,
+        "interfaces": interfaces,
+    }
+
+
+def get_subclasses(db: Session, parent_name: str, project_id: int | None = None) -> list[dict]:
+    """Find all classes that extend or implement the given parent/interface name."""
+    query = db.query(models.ClassRelationship).filter(
+        models.ClassRelationship.target_class_name == parent_name,
+    )
+    if project_id is not None:
+        query = query.join(
+            models.Class, models.Class.id == models.ClassRelationship.source_class_id
+        ).join(
+            models.File, models.File.id == models.Class.file_id
+        ).filter(
+            models.File.project_id == project_id
+        )
+
+    results = []
+    for rel in query.all():
+        cls = db.query(models.Class).filter(models.Class.id == rel.source_class_id).first()
+        if not cls:
+            continue
+        file_obj = db.query(models.File).filter(models.File.id == cls.file_id).first()
+        results.append({
+            "class_id": cls.id,
+            "name": cls.name,
+            "file_path": file_obj.file_path if file_obj else None,
+            "relationship": rel.relationship_type,
+            "line": rel.context_line,
+        })
+    return results

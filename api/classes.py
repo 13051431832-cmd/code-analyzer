@@ -3,7 +3,8 @@
 Provides:
 - Search classes across all projects
 - Get class detail with methods
-- List classes in a file
+- Get class hierarchy (extends/implements)
+- Search by parent class name
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from . import crud, models
 from .database import get_db
-from .search_service import search_classes
+from .search_service import search_classes, get_class_hierarchy, get_subclasses
 
 router = APIRouter()
 
@@ -35,6 +36,17 @@ def search_classes_endpoint(
         "query": q,
         "pagination": {"limit": limit, "offset": offset, "has_more": len(results) == limit},
     }
+
+
+@router.get("/classes/search-by-parent")
+def search_by_parent(
+    name: str = Query(..., min_length=1, description="Parent class or interface name"),
+    project_id: int | None = Query(None, description="Filter by project ID"),
+    db: Session = Depends(get_db),
+):
+    """Find all classes that extend or implement the given parent class / interface."""
+    results = get_subclasses(db, name, project_id=project_id)
+    return {"results": results, "total": len(results), "parent_name": name}
 
 
 @router.get("/classes/{class_id}")
@@ -106,3 +118,12 @@ def get_class_detail(
         result["method_count"] = len(methods)
 
     return result
+
+
+@router.get("/classes/{class_id}/hierarchy")
+def class_hierarchy(
+    class_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get full inheritance hierarchy for a class: parents, children, interfaces."""
+    return get_class_hierarchy(db, class_id)

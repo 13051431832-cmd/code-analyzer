@@ -324,6 +324,11 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                 }
                 db.commit()
 
+            # ── Group extends/implements by class name for storage ──
+            extends_by_class: dict[str, list[dict]] = {}
+            for ext in parse_result.get("extends", []):
+                extends_by_class.setdefault(ext["class"], []).append(ext)
+
             # ── Collect function work items ──
             func_work_items = []
             for func in parse_result["functions"]:
@@ -672,12 +677,16 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                     ai_purpose = ai_meta.get("purpose") if ai_meta else None
                     ai_interfaces = ai_meta.get("interfaces") if ai_meta else None
 
+                    cls_extends = extends_by_class.get(cls["name"], [])
+                    base_classes = [{"name": e["parent"], "line": e.get("line")} for e in cls_extends]
+
                     cls_obj = crud.create_class(
                         db, file_obj.id,
                         cls["name"], cls["start_line"], cls["end_line"], cls["docstring"],
                         code_snippet=code_snippet,
                         ai_purpose=ai_purpose,
                         ai_interfaces=ai_interfaces,
+                        base_classes=base_classes,
                     )
 
                     if work_item["needs_beginner"]:
@@ -703,6 +712,25 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                 except Exception as e:
                     print(f"❌ 处理类 {cls.get('name', 'unknown')} 失败: {e}")
                     continue
+
+            # ---- 存储 EXTENDS class_relationships ----
+            if parse_result.get("extends"):
+                class_name_to_id = {}
+                for c in db.query(models.Class).filter(
+                    models.Class.file_id == file_obj.id
+                ).all():
+                    class_name_to_id[c.name] = c.id
+
+                for ext in parse_result["extends"]:
+                    source_id = class_name_to_id.get(ext["class"])
+                    if source_id:
+                        try:
+                            crud.create_class_relationship(
+                                db, source_id, ext["parent"],
+                                None, "EXTENDS", 5, ext.get("line")
+                            )
+                        except Exception:
+                            pass
 
             # ---- 存储 CALLS 调用关系 ----
             try:
@@ -747,21 +775,6 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                             pass  # 单个导入失败不中断
             except Exception as e:
                 print(f"⚠️ 存储导入关系失败: {e}")
-
-            # ---- 存储 EXTENDS 继承关系 ----
-            try:
-                for ext in parse_result.get("extends", []):
-                    source_id = name_to_id.get(ext["class"])
-                    if source_id:
-                        try:
-                            crud.create_relationship(
-                                db, source_id, ext["parent"],
-                                None, "EXTENDS", 5, ext.get("line")
-                            )
-                        except Exception:
-                            pass
-            except Exception as e:
-                print(f"⚠️ 存储继承关系失败: {e}")
 
             # 保存检查点：标记当前文件为已处理
             processed_files.add(rel_path)

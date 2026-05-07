@@ -75,7 +75,8 @@ def create_function(db: Session, file_id: int, name: str, signature: str, start_
 def create_class(db: Session, file_id: int, name: str, start_line: int, end_line: int, docstring: str,
                  explanation_simple: str = None, explanation_architecture: str = None,
                  code_snippet: str = None,
-                 ai_purpose: str = None, ai_interfaces: list = None) -> models.Class:
+                 ai_purpose: str = None, ai_interfaces: list = None,
+                 base_classes: list = None, interfaces: list = None) -> models.Class:
     cls = models.Class(
         file_id=file_id,
         name=name,
@@ -87,6 +88,8 @@ def create_class(db: Session, file_id: int, name: str, start_line: int, end_line
         code_snippet=code_snippet,
         ai_purpose=ai_purpose,
         ai_interfaces=ai_interfaces,
+        base_classes=base_classes,
+        interfaces=interfaces,
     )
     db.add(cls)
     db.commit()
@@ -283,6 +286,24 @@ def create_relationship(db: Session, source_function_id: int, target_function_na
     rel = models.FunctionRelationship(
         source_function_id=source_function_id,
         target_function_name=target_function_name,
+        target_file_id=target_file_id,
+        relationship_type=relationship_type,
+        confidence=confidence,
+        context_line=context_line,
+    )
+    db.add(rel)
+    db.commit()
+    db.refresh(rel)
+    return rel
+
+
+def create_class_relationship(db: Session, source_class_id: int, target_class_name: str,
+                              target_file_id: int = None, relationship_type: str = "EXTENDS",
+                              confidence: int = 5, context_line: int = None) -> models.ClassRelationship:
+    """创建类间关系（继承、实现）"""
+    rel = models.ClassRelationship(
+        source_class_id=source_class_id,
+        target_class_name=target_class_name,
         target_file_id=target_file_id,
         relationship_type=relationship_type,
         confidence=confidence,

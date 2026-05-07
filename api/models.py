@@ -122,6 +122,10 @@ class Class(Base):
     ai_purpose = Column(Text, nullable=True)
     ai_interfaces = Column(JSONB, nullable=True)
     """JSON: [{"name": str, "type": str, "description": str}], class methods/interfaces relevant for AI."""
+    base_classes = Column(JSONB, nullable=True)
+    """JSON: [{"name": "BaseClass", "line": N}], parsed extends clauses."""
+    interfaces = Column(JSONB, nullable=True)
+    """JSON: [{"name": "InterfaceName", "line": N}], parsed implements clauses."""
 
     # ---- Expert mode fields (for experienced developers) ----
     expert_purpose = Column(Text, nullable=True)
@@ -144,6 +148,20 @@ class FunctionRelationship(Base):
     target_file_id = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
     relationship_type = Column(String(50), nullable=False, index=True)  # CALLS, IMPORTS, EXTENDS
     confidence = Column(Integer, default=5)  # 0-10 置信度
+    context_line = Column(Integer, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ClassRelationship(Base):
+    """类间关系表：追踪继承、实现等关系"""
+    __tablename__ = "class_relationships"
+
+    id = Column(Integer, primary_key=True)
+    source_class_id = Column(Integer, ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_class_name = Column(String(255), nullable=False, index=True)
+    target_file_id = Column(Integer, ForeignKey("files.id", ondelete="SET NULL"), nullable=True)
+    relationship_type = Column(String(50), nullable=False, index=True)  # EXTENDS, IMPLEMENTS
+    confidence = Column(Integer, default=5)
     context_line = Column(Integer, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
