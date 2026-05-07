@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/classes/search")
 def search_classes_endpoint(
-    q: str = Query(..., min_length=1, description="Search query"),
+    q: str = Query("", min_length=0, description="Search query (empty = match all)"),
     language: str | None = Query(None, description="Filter by language"),
     project_id: int | None = Query(None, description="Filter by project ID"),
     pattern: str | None = Query(None, description="Filter by architecture pattern (e.g. Repository, Factory)"),

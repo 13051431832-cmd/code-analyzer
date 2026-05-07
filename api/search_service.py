@@ -495,7 +495,7 @@ def search_classes(
     """Full-text search across analyzed classes with field weighting and identifier splitting."""
     query = _split_query(query)  # Split camelCase/snake_case for matching
     if not query or not query.strip():
-        return []
+        query = "*"  # Match all when no text query (e.g., pattern-only search)
 
     limit = min(limit, config.SEARCH_MAX_LIMIT)
 
@@ -513,6 +513,16 @@ def search_classes(
         params["pattern_json"] = json.dumps([{"pattern": pattern}])
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
+
+    if query == "*":
+        # Pattern-only or no-text search: skip tsquery, order by class name
+        ts_match = "TRUE"
+        rank_expr = "1.0"
+        order_clause = "c.name ASC"
+    else:
+        ts_match = f"{_class_weighted_tsvector()} @@ websearch_to_tsquery('english', :query)"
+        rank_expr = f"ts_rank({_class_weighted_tsvector()}, websearch_to_tsquery('english', :query))"
+        order_clause = "rank DESC"
 
     sql = text(f"""
         SELECT
@@ -536,17 +546,14 @@ def search_classes(
             fl.language,
             p.id AS project_id,
             p.name AS project_name,
-            ts_rank(
-                {_class_weighted_tsvector()},
-                websearch_to_tsquery('english', :query)
-            ) AS rank
+            {rank_expr} AS rank
         FROM classes c
         JOIN files fl ON fl.id = c.file_id
         JOIN projects p ON p.id = fl.project_id
         WHERE
             {where_clause}
-            AND {_class_weighted_tsvector()} @@ websearch_to_tsquery('english', :query)
-        ORDER BY rank DESC
+            AND {ts_match}
+        ORDER BY {order_clause}
         LIMIT :limit OFFSET :offset
     """)
 
