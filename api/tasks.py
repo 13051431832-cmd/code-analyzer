@@ -314,6 +314,16 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
             # 创建文件记录
             file_obj = crud.create_file(db, project.id, rel_path, file_hash, size, lang)
 
+            # 写入文件依赖（解析到的 imports）
+            if parse_result.get("imports"):
+                file_obj.dependencies = {
+                    "imports": [
+                        {"source": imp["target"], "line": imp["line"]}
+                        for imp in parse_result["imports"]
+                    ]
+                }
+                db.commit()
+
             # ── Collect function work items ──
             func_work_items = []
             for func in parse_result["functions"]:

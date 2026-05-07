@@ -618,3 +618,147 @@ def get_function_detail(db: Session, function_id: int) -> dict | None:
         "caller_count": counts["callers"],
         "callee_count": counts["callees"],
     }
+
+
+def get_file_dependencies(db: Session, file_id: int) -> list[dict]:
+    """
+    Get import dependencies for a specific file.
+    Returns the stored dependencies JSONB from the file record.
+    Also enriches with resolved file references when an import
+    matches another file in the same project.
+    """
+    file_obj = db.query(models.File).filter(models.File.id == file_id).first()
+    if not file_obj:
+        return []
+
+    deps_data = file_obj.dependencies or {}
+    imports = deps_data.get("imports", [])
+
+    # Resolve import targets to other files in the same project
+    all_project_files = {
+        f.file_path: f.id
+        for f in db.query(models.File).filter(
+            models.File.project_id == file_obj.project_id
+        ).all()
+    }
+
+    enriched = []
+    for imp in imports:
+        entry = {"source": imp["source"], "line": imp.get("line")}
+        # Try to resolve: check if any project file path matches the import
+        source = imp["source"]
+        resolved = None
+        for fpath, fid in all_project_files.items():
+            # Match by module path: "a.b.c" matches "a/b/c.py" or "a/b/c.rs" etc
+            module_path = source.replace(".", "/")
+            if module_path in fpath.replace("\\", "/"):
+                resolved = {"file_id": fid, "file_path": fpath}
+                break
+        if resolved:
+            entry["resolved"] = resolved
+        enriched.append(entry)
+
+    return enriched
+
+
+def get_file_importers(db: Session, file_id: int) -> list[dict]:
+    """
+    Find all files that import from the given file within the same project.
+    Scans file.dependencies JSONB for imports matching the file's path or module name.
+    """
+    file_obj = db.query(models.File).filter(models.File.id == file_id).first()
+    if not file_obj:
+        return []
+
+    project_id = file_obj.project_id
+    fpath = file_obj.file_path
+
+    # Derive module paths that could reference this file
+    # e.g. "src/auth/login.py" → possible imports: "src.auth.login", "auth.login", "login"
+    path_no_ext = fpath.rsplit(".", 1)[0] if "." in fpath else fpath
+    module_candidates = [path_no_ext.replace("/", ".")]
+    # Also add just the filename without extension
+    module_candidates.append(path_no_ext.rsplit("/", 1)[-1] if "/" in path_no_ext else path_no_ext)
+
+    # Find all files in the same project
+    other_files = db.query(models.File).filter(
+        models.File.project_id == project_id,
+        models.File.id != file_id,
+        models.File.dependencies.isnot(None),
+    ).all()
+
+    importers = []
+    for other in other_files:
+        deps = other.dependencies or {}
+        imports = deps.get("imports", [])
+        for imp in imports:
+            src = imp.get("source", "")
+            src_module = src.replace("/", ".")
+            for candidate in module_candidates:
+                if src_module == candidate or src_module.startswith(candidate + "."):
+                    importers.append({
+                        "file_id": other.id,
+                        "file_path": other.file_path,
+                        "import_source": src,
+                        "line": imp.get("line"),
+                    })
+                    break
+
+    return importers
+
+
+def get_module_graph(db: Session, project_id: int) -> dict:
+    """
+    Build a module-level dependency graph for a project.
+    Groups files by their top-level directory/module and aggregates dependencies.
+    Returns nodes (modules) and edges (dependencies between modules).
+    """
+    files = db.query(models.File).filter(
+        models.File.project_id == project_id,
+    ).all()
+
+    if not files:
+        return {"nodes": [], "edges": []}
+
+    # Build file_id → module_name map
+    file_modules = {}
+    for f in files:
+        parts = f.file_path.replace("\\", "/").split("/")
+        # Top-level module = first dir, or "." for root-level files
+        module = parts[0] if len(parts) > 1 else "."
+        file_modules[f.id] = module
+
+    # Build module set
+    modules = sorted(set(file_modules.values()))
+
+    # Build edges: module A → module B if any file in A imports a file in B
+    edges = {}
+    for f in files:
+        deps = f.dependencies or {}
+        imports = deps.get("imports", [])
+        src_module = file_modules.get(f.id, ".")
+        for imp in imports:
+            source = imp.get("source", "")
+            # Resolve to target file: check if any file path matches
+            for other in files:
+                if other.id == f.id:
+                    continue
+                other_path = other.file_path.replace("\\", "/")
+                module_path = source.replace(".", "/")
+                if module_path in other_path:
+                    tgt_module = file_modules.get(other.id, ".")
+                    if src_module != tgt_module:
+                        key = f"{src_module}→{tgt_module}"
+                        if key not in edges:
+                            edges[key] = {
+                                "from": src_module,
+                                "to": tgt_module,
+                                "count": 0,
+                            }
+                        edges[key]["count"] += 1
+                    break
+
+    return {
+        "nodes": [{"module": m} for m in modules],
+        "edges": sorted(edges.values(), key=lambda e: -e["count"]),
+    }

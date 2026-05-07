@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from . import database, search_service, embedding_service
+from . import database, search_service, embedding_service, models
 from .models import FunctionRelationship
 
 router = APIRouter()
@@ -158,3 +158,44 @@ def hybrid_search(
         "semantic_weight": semantic_weight,
         "pagination": {"limit": limit, "offset": 0, "has_more": len(results) == limit},
     }
+
+
+@router.get("/files/{file_id}/dependencies")
+def file_dependencies(
+    file_id: int,
+    db: Session = Depends(database.get_db),
+):
+    """Get import dependencies for a file. Returns resolved imports where targets match other project files."""
+    deps = search_service.get_file_dependencies(db, file_id)
+    file_obj = db.query(models.File).filter(models.File.id == file_id).first()
+    return {
+        "file_id": file_id,
+        "file_path": file_obj.file_path if file_obj else None,
+        "dependencies": deps,
+        "total": len(deps),
+    }
+
+
+@router.get("/files/{file_id}/importers")
+def file_importers(
+    file_id: int,
+    db: Session = Depends(database.get_db),
+):
+    """Find all files in the same project that import from this file."""
+    importers = search_service.get_file_importers(db, file_id)
+    file_obj = db.query(models.File).filter(models.File.id == file_id).first()
+    return {
+        "file_id": file_id,
+        "file_path": file_obj.file_path if file_obj else None,
+        "importers": importers,
+        "total": len(importers),
+    }
+
+
+@router.get("/projects/{project_id}/module-graph")
+def module_graph(
+    project_id: int,
+    db: Session = Depends(database.get_db),
+):
+    """Build a module-level dependency graph for a project. Groups files by top-level directory."""
+    return search_service.get_module_graph(db, project_id)
