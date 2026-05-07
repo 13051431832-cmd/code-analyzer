@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import text, func as safunc
 from sqlalchemy.orm import Session
 from . import models
@@ -508,7 +510,7 @@ def search_classes(
         params["project_id"] = project_id
     if pattern:
         conditions.append("c.ai_patterns @> :pattern_json")
-        params["pattern_json"] = f'[{{"pattern": "{pattern}"}}]'
+        params["pattern_json"] = json.dumps([{"pattern": pattern}])
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
 

@@ -84,6 +84,7 @@ def get_class_detail(
         "expert_extension_points": cls.expert_extension_points,
         "base_classes": cls.base_classes,
         "interfaces": cls.interfaces,
+        "ai_patterns": cls.ai_patterns,
         "file_id": cls.file_id,
         "file_path": file_obj.file_path if file_obj else None,
         "project_id": project.id if project else None,
