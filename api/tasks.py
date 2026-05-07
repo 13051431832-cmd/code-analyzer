@@ -326,8 +326,13 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
 
             # ── Group extends/implements by class name for storage ──
             extends_by_class: dict[str, list[dict]] = {}
+            implements_by_class: dict[str, list[dict]] = {}
             for ext in parse_result.get("extends", []):
-                extends_by_class.setdefault(ext["class"], []).append(ext)
+                rel_type = ext.get("rel_type", "EXTENDS")
+                if rel_type == "IMPLEMENTS":
+                    implements_by_class.setdefault(ext["class"], []).append(ext)
+                else:
+                    extends_by_class.setdefault(ext["class"], []).append(ext)
 
             # ── Collect function work items ──
             func_work_items = []
@@ -679,6 +684,8 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
 
                     cls_extends = extends_by_class.get(cls["name"], [])
                     base_classes = [{"name": e["parent"], "line": e.get("line")} for e in cls_extends]
+                    cls_implements = implements_by_class.get(cls["name"], [])
+                    interfaces = [{"name": e["parent"], "line": e.get("line")} for e in cls_implements]
 
                     cls_obj = crud.create_class(
                         db, file_obj.id,
@@ -686,7 +693,8 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                         code_snippet=code_snippet,
                         ai_purpose=ai_purpose,
                         ai_interfaces=ai_interfaces,
-                        base_classes=base_classes,
+                        base_classes=base_classes or None,
+                        interfaces=interfaces or None,
                     )
 
                     if work_item["needs_beginner"]:
@@ -713,7 +721,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                     print(f"❌ 处理类 {cls.get('name', 'unknown')} 失败: {e}")
                     continue
 
-            # ---- 存储 EXTENDS class_relationships ----
+            # ---- 存储 EXTENDS/IMPLEMENTS class_relationships ----
             if parse_result.get("extends"):
                 class_name_to_id = {}
                 for c in db.query(models.Class).filter(
@@ -724,10 +732,11 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                 for ext in parse_result["extends"]:
                     source_id = class_name_to_id.get(ext["class"])
                     if source_id:
+                        rel_type = ext.get("rel_type", "EXTENDS")
                         try:
                             crud.create_class_relationship(
                                 db, source_id, ext["parent"],
-                                None, "EXTENDS", 5, ext.get("line")
+                                None, rel_type, 5, ext.get("line")
                             )
                         except Exception:
                             pass

@@ -78,7 +78,8 @@ def parse_python_file(file_path: str) -> dict:
                     result["extends"].append({
                         "class": node.name,
                         "parent": base_name,
-                        "line": base.lineno
+                        "line": base.lineno,
+                        "rel_type": "EXTENDS",
                     })
 
     # Extract all CALLS by walking the entire AST

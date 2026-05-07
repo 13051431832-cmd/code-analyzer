@@ -125,26 +125,27 @@ IMPORT_PATTERNS: dict[str, list[re.Pattern]] = {
 }
 
 # Extends/Implements detection patterns
-EXTENDS_PATTERNS: dict[str, list[re.Pattern]] = {
+# Each entry: (rel_type, pattern)
+EXTENDS_PATTERNS: dict[str, list[tuple[str, re.Pattern]]] = {
     "javascript": [
-        re.compile(r"class\s+(\w+)\s+extends\s+(\w+)"),
+        ("EXTENDS", re.compile(r"class\s+(\w+)\s+extends\s+(\w+)")),
     ],
     "typescript": [
-        re.compile(r"class\s+(\w+)\s+extends\s+(\w+)"),
-        re.compile(r"class\s+(\w+)\s+implements\s+(\w+)"),
-        re.compile(r"interface\s+(\w+)\s+extends\s+(\w+)"),
+        ("EXTENDS", re.compile(r"class\s+(\w+)\s+extends\s+(\w+)")),
+        ("IMPLEMENTS", re.compile(r"class\s+(\w+)\s+implements\s+(\w+)")),
+        ("EXTENDS", re.compile(r"interface\s+(\w+)\s+extends\s+(\w+)")),
     ],
     "go": [
-        re.compile(r"type\s+(\w+)\s+interface\s+\{?"),
+        ("EXTENDS", re.compile(r"type\s+(\w+)\s+interface\s+\{?")),
     ],
     "java": [
-        re.compile(r"class\s+(\w+)\s+extends\s+(\w+)"),
-        re.compile(r"class\s+(\w+)\s+implements\s+(\w+)"),
-        re.compile(r"interface\s+(\w+)\s+extends\s+(\w+)"),
+        ("EXTENDS", re.compile(r"class\s+(\w+)\s+extends\s+(\w+)")),
+        ("IMPLEMENTS", re.compile(r"class\s+(\w+)\s+implements\s+(\w+)")),
+        ("EXTENDS", re.compile(r"interface\s+(\w+)\s+extends\s+(\w+)")),
     ],
     "rust": [
-        re.compile(r"impl\s+(\w+)\s+for\s+(\w+)"),
-        re.compile(r"trait\s+(\w+)(?:\s*:\s*(\w+))?"),
+        ("EXTENDS", re.compile(r"impl\s+(\w+)\s+for\s+(\w+)")),
+        ("EXTENDS", re.compile(r"trait\s+(\w+)(?:\s*:\s*(\w+))?")),
     ],
 }
 
@@ -421,7 +422,7 @@ def parse_generic_file(file_path: str) -> dict:
     extends_patterns = EXTENDS_PATTERNS.get(lang, [])
     for idx, line in enumerate(lines):
         stripped = line.strip()
-        for pattern in extends_patterns:
+        for rel_type, pattern in extends_patterns:
             m = pattern.search(stripped)
             if m:
                 if lang == "rust" and "impl" in stripped and "for" in stripped:
@@ -429,16 +430,18 @@ def parse_generic_file(file_path: str) -> dict:
                     result["extends"].append({
                         "class": m.group(2),
                         "parent": m.group(1),
-                        "line": idx + 1
+                        "line": idx + 1,
+                        "rel_type": rel_type,
                     })
                 elif lang in ("go",):
-                    # Go interface
+                    # Go interface: skip (no extends clause to store)
                     pass
                 elif m.lastindex and m.lastindex >= 2:
                     result["extends"].append({
                         "class": m.group(1),
                         "parent": m.group(2),
-                        "line": idx + 1
+                        "line": idx + 1,
+                        "rel_type": rel_type,
                     })
 
     return result

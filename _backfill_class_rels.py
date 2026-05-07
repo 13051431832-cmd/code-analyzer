@@ -22,7 +22,7 @@ def backfill_class_rels(project_id: int | None = None):
     db = SessionLocal()
     try:
         query = db.query(models.Class).filter(
-            models.Class.base_classes.is_(None)
+            (models.Class.base_classes.is_(None)) | (models.Class.interfaces.is_(None))
         )
         if project_id:
             query = query.join(
@@ -69,39 +69,48 @@ def backfill_class_rels(project_id: int | None = None):
             if not extends:
                 continue
 
-            # Group extends by class name
+            # Group extends by class name, split by rel_type
             extends_by_class: dict[str, list[dict]] = {}
+            implements_by_class: dict[str, list[dict]] = {}
             for ext in extends:
-                extends_by_class.setdefault(ext["class"], []).append(ext)
+                rel_type = ext.get("rel_type", "EXTENDS")
+                if rel_type == "IMPLEMENTS":
+                    implements_by_class.setdefault(ext["class"], []).append(ext)
+                else:
+                    extends_by_class.setdefault(ext["class"], []).append(ext)
 
             # Update classes in this file
             file_classes = db.query(models.Class).filter(
                 models.Class.file_id == file_id,
-                models.Class.base_classes.is_(None),
+                (models.Class.base_classes.is_(None)) | (models.Class.interfaces.is_(None)),
             ).all()
 
             for cls in file_classes:
                 cls_extends = extends_by_class.get(cls.name, [])
-                if not cls_extends:
+                cls_implements = implements_by_class.get(cls.name, [])
+                if not cls_extends and not cls_implements:
                     continue
 
-                base_classes = [{"name": e["parent"], "line": e.get("line")} for e in cls_extends]
-                cls.base_classes = base_classes
+                if cls_extends:
+                    cls.base_classes = [{"name": e["parent"], "line": e.get("line")} for e in cls_extends]
+                if cls_implements:
+                    cls.interfaces = [{"name": e["parent"], "line": e.get("line")} for e in cls_implements]
                 updated += 1
 
                 # Create class_relationships
-                for ext in cls_extends:
+                for ext in cls_extends + cls_implements:
+                    rel_type = ext.get("rel_type", "EXTENDS")
                     try:
                         existing = db.query(models.ClassRelationship).filter(
                             models.ClassRelationship.source_class_id == cls.id,
                             models.ClassRelationship.target_class_name == ext["parent"],
-                            models.ClassRelationship.relationship_type == "EXTENDS",
+                            models.ClassRelationship.relationship_type == rel_type,
                         ).first()
                         if not existing:
                             rel = models.ClassRelationship(
                                 source_class_id=cls.id,
                                 target_class_name=ext["parent"],
-                                relationship_type="EXTENDS",
+                                relationship_type=rel_type,
                                 confidence=5,
                                 context_line=ext.get("line"),
                             )
@@ -121,9 +130,19 @@ def backfill_class_rels(project_id: int | None = None):
         with_bases = db.query(models.Class).filter(
             models.Class.base_classes.isnot(None)
         ).count()
+        with_ifaces = db.query(models.Class).filter(
+            models.Class.interfaces.isnot(None)
+        ).count()
         with_rel = db.query(models.ClassRelationship).count()
+        extends_count = db.query(models.ClassRelationship).filter(
+            models.ClassRelationship.relationship_type == "EXTENDS"
+        ).count()
+        implements_count = db.query(models.ClassRelationship).filter(
+            models.ClassRelationship.relationship_type == "IMPLEMENTS"
+        ).count()
         print(f"Coverage: {with_bases}/{total} classes have base_classes ({round(with_bases/total*100, 1)}%)")
-        print(f"class_relationships rows: {with_rel}")
+        print(f"           {with_ifaces}/{total} classes have interfaces ({round(with_ifaces/total*100, 1)}%)")
+        print(f"class_relationships rows: {with_rel} (EXTENDS={extends_count}, IMPLEMENTS={implements_count})")
 
     finally:
         db.close()

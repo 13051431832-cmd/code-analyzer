@@ -413,20 +413,19 @@ def parse_ts_file(file_path: str) -> dict:
                     "class": child_name,
                     "parent": parent_name,
                     "line": parent_node.start_point[0] + 1,
+                    "rel_type": "EXTENDS",
                 })
-            # Interfaces (TS)
-            interfaces = []
+            # Interfaces (TS / Java / etc.)
             for child in node.children:
                 if child.type == " implements_clause":
                     for cls_ref in child.children:
                         if cls_ref.type in ("type_identifier", "nested_type_identifier"):
-                            interfaces.append(_node_text(source_bytes, cls_ref))
-            for iface in interfaces:
-                result["extends"].append({
-                    "class": child_name if name_node else "?",
-                    "parent": iface,
-                    "line": node.start_point[0] + 1,
-                })
+                            result["extends"].append({
+                                "class": child_name if name_node else "?",
+                                "parent": _node_text(source_bytes, cls_ref),
+                                "line": node.start_point[0] + 1,
+                                "rel_type": "IMPLEMENTS",
+                            })
             return
 
         # Default: recurse into children
