@@ -34,7 +34,8 @@ FUNCTION_PATTERNS: dict[str, list[re.Pattern]] = {
     ],
     "rust": [
         # Supports: pub, pub(crate), unsafe, async, extern "C", const, and generics
-        re.compile(r"^(?:(?:pub(?:\s*\(\s*crate\s*\))?)\s+)?(?:unsafe\s+)?(?:async\s+)?(?:extern\s+(?:\"[^\"]*\"\s+)?)?(?:const\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\("),
+        # Match both top-level and indented fn (methods inside impl blocks)
+        re.compile(r"^\s*(?:(?:pub(?:\s*\(\s*crate\s*\))?)\s+)?(?:unsafe\s+)?(?:async\s+)?(?:extern\s+(?:\"[^\"]*\"\s+)?)?(?:const\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\("),
     ],
 }
 
@@ -373,9 +374,8 @@ def parse_generic_file(file_path: str) -> dict:
     # Estimate function end lines for call extraction
     result["functions"] = _estimate_end_lines(lines, result["functions"])
 
-    # Associate methods with their enclosing classes
-    if result["classes"] and result["functions"]:
-        # Estimate class end lines using indent-based logic
+    # Estimate class end lines using indent-based logic (always run, not gated on functions)
+    if result["classes"]:
         sorted_classes = sorted(result["classes"], key=lambda c: c["start_line"])
         for i, cls in enumerate(sorted_classes):
             end = len(lines)
@@ -400,6 +400,10 @@ def parse_generic_file(file_path: str) -> dict:
                     # Avoid duplicates
                     if not any(m["name"] == method_entry["name"] and m["start_line"] == method_entry["start_line"] for m in cls["methods"]):
                         cls["methods"].append(method_entry)
+
+            # Remove methods that were assigned to classes from top-level functions
+            assigned_lines = {(m["start_line"], m["name"]) for cls in sorted_classes for m in cls["methods"]}
+            result["functions"] = [f for f in result["functions"] if (f["start_line"], f["name"]) not in assigned_lines]
 
     # Extract calls from each function body
     for func in result["functions"]:

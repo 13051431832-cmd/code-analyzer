@@ -82,6 +82,7 @@ AI_CLASS_SYSTEM_PROMPT = """
    结构型: Adapter, Decorator, Facade, Proxy, Composite, Bridge
    行为型: Strategy, Observer, Command, Template Method, Chain of Responsibility, Mediator, State, Visitor, Iterator
    架构型: MVC, Repository, Service Layer, DTO, Middleware, Pub/Sub, Provider, ORM
+   通用型: Exception/Error（异常/错误类）, Test Case（测试用例类）, Config/Configuration（配置类）, Utility/Helper（工具类）, Enum/Enumeration（枚举类）, Data Object/Struct（纯数据结构）, Event（事件类）, Wrapper（包装/委托类）, Callback/Handler（回调/处理器）
 
    每个pattern包含：
    - pattern: 模式名称（优先从上述列表选择，也可补充自定义模式）
