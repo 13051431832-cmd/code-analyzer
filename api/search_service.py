@@ -71,6 +71,7 @@ def _class_weighted_tsvector() -> str:
         setweight(to_tsvector('simple',  {_split_identifiers('c.explanation_simple')}), 'C') ||
         setweight(to_tsvector('simple',  {_split_identifiers('c.explanation_architecture')}), 'C') ||
         setweight(to_tsvector('simple',  {_split_identifiers('c.ai_purpose')}), 'B') ||
+        setweight(to_tsvector('simple',  coalesce(c.ai_patterns::text, '')), 'B') ||
         setweight(to_tsvector('english', {_split_identifiers('c.code_snippet')}), 'D')
     """
 
@@ -485,6 +486,7 @@ def search_classes(
     query: str,
     language: str | None = None,
     project_id: int | None = None,
+    pattern: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[dict]:
@@ -504,6 +506,9 @@ def search_classes(
     if project_id is not None:
         conditions.append("p.id = :project_id")
         params["project_id"] = project_id
+    if pattern:
+        conditions.append("c.ai_patterns @> :pattern_json")
+        params["pattern_json"] = f'[{{"pattern": "{pattern}"}}]'
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
 
@@ -519,6 +524,7 @@ def search_classes(
             c.explanation_architecture,
             c.ai_purpose,
             c.ai_interfaces,
+            c.ai_patterns,
             c.expert_purpose,
             c.expert_architecture,
             c.expert_responsibilities,
@@ -558,6 +564,7 @@ def search_classes(
             "explanation_architecture": row.explanation_architecture,
             "ai_purpose": row.ai_purpose,
             "ai_interfaces": row.ai_interfaces,
+            "ai_patterns": row.ai_patterns,
             "expert_purpose": row.expert_purpose,
             "expert_architecture": row.expert_architecture,
             "expert_responsibilities": row.expert_responsibilities,

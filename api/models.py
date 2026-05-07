@@ -122,6 +122,8 @@ class Class(Base):
     ai_purpose = Column(Text, nullable=True)
     ai_interfaces = Column(JSONB, nullable=True)
     """JSON: [{"name": str, "type": str, "description": str}], class methods/interfaces relevant for AI."""
+    ai_patterns = Column(JSONB, nullable=True)
+    """JSON: [{"pattern": "Repository", "confidence": "high|medium|low", "evidence": "..."}], architecture pattern tags."""
     base_classes = Column(JSONB, nullable=True)
     """JSON: [{"name": "BaseClass", "line": N}], parsed extends clauses."""
     interfaces = Column(JSONB, nullable=True)

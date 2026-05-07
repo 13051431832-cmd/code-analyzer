@@ -22,13 +22,14 @@ def search_classes_endpoint(
     q: str = Query(..., min_length=1, description="Search query"),
     language: str | None = Query(None, description="Filter by language"),
     project_id: int | None = Query(None, description="Filter by project ID"),
+    pattern: str | None = Query(None, description="Filter by architecture pattern (e.g. Repository, Factory)"),
     limit: int = Query(20, ge=1, le=100, description="Max results"),
     offset: int = Query(0, ge=0, description="Result offset for pagination"),
     db: Session = Depends(get_db),
 ):
     """Full-text search across analyzed classes by name, docstring, and code."""
     results = search_classes(
-        db, query=q, language=language, project_id=project_id, limit=limit, offset=offset
+        db, query=q, language=language, project_id=project_id, pattern=pattern, limit=limit, offset=offset
     )
     return {
         "results": results,

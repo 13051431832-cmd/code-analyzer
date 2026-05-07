@@ -662,6 +662,7 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                         if ai_meta:
                             existing_class.ai_purpose = ai_meta.get("purpose")
                             existing_class.ai_interfaces = ai_meta.get("interfaces")
+                            existing_class.ai_patterns = ai_meta.get("patterns")
                             existing_class.code_snippet = code_snippet
 
                         if work_item["needs_beginner"]:
@@ -687,12 +688,15 @@ def analyze_repo(self, task_id: int, repo_url: str, project_name: str = None, mo
                     cls_implements = implements_by_class.get(cls["name"], [])
                     interfaces = [{"name": e["parent"], "line": e.get("line")} for e in cls_implements]
 
+                    ai_patterns = ai_meta.get("patterns") if ai_meta else None
+
                     cls_obj = crud.create_class(
                         db, file_obj.id,
                         cls["name"], cls["start_line"], cls["end_line"], cls["docstring"],
                         code_snippet=code_snippet,
                         ai_purpose=ai_purpose,
                         ai_interfaces=ai_interfaces,
+                        ai_patterns=ai_patterns,
                         base_classes=base_classes or None,
                         interfaces=interfaces or None,
                     )

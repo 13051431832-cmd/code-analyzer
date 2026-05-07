@@ -75,6 +75,18 @@ AI_CLASS_SYSTEM_PROMPT = """
 1. purpose: 一句话精确描述该类的作用（≤25字）
 2. interfaces: 该类对外暴露的关键方法/属性列表
    每个interfaces包含 name, type（方法签名）, description（作用）
+3. patterns: 该类使用的架构/设计模式列表（可空数组）
+   参考模式库（选择最匹配的1-3个，如无匹配则返回空数组）：
+
+   创建型: Factory, Abstract Factory, Builder, Singleton, Prototype, Dependency Injection
+   结构型: Adapter, Decorator, Facade, Proxy, Composite, Bridge
+   行为型: Strategy, Observer, Command, Template Method, Chain of Responsibility, Mediator, State, Visitor, Iterator
+   架构型: MVC, Repository, Service Layer, DTO, Middleware, Pub/Sub, Provider, ORM
+
+   每个pattern包含：
+   - pattern: 模式名称（优先从上述列表选择，也可补充自定义模式）
+   - confidence: "high" | "medium" | "low"
+   - evidence: 一句话说明为什么匹配（≤30字）
 
 输出格式：
 {
@@ -82,6 +94,9 @@ AI_CLASS_SYSTEM_PROMPT = """
   "interfaces": [
     {"name": "login", "type": "(email: str, password: str) -> User", "description": "用户登录认证"},
     {"name": "logout", "type": "() -> void", "description": "清除当前用户会话"}
+  ],
+  "patterns": [
+    {"pattern": "Repository", "confidence": "high", "evidence": "直接与数据存储交互，封装查询逻辑"}
   ]
 }
 
@@ -89,6 +104,7 @@ AI_CLASS_SYSTEM_PROMPT = """
 - 不要使用比喻
 - 只包含public/protected的关键接口
 - 方法签名(type)必须包含参数和返回类型
+- patterns不要强行匹配，不确定时空数组即可
 """
 
 # ---- Expert mode prompts (for experienced developers) ----
@@ -234,6 +250,24 @@ def _validate_ai_metadata(result: dict, code_type: str) -> dict:
                     "description": str(iface.get("description", "")),
                 })
         result["interfaces"] = validated_interfaces
+
+        # Validate patterns
+        patterns = result.get("patterns", [])
+        if not isinstance(patterns, list):
+            patterns = []
+        valid_confidence = {"high", "medium", "low"}
+        validated_patterns = []
+        for p in patterns:
+            if isinstance(p, dict) and "pattern" in p:
+                conf = str(p.get("confidence", "medium"))
+                if conf not in valid_confidence:
+                    conf = "medium"
+                validated_patterns.append({
+                    "pattern": str(p.get("pattern", "")),
+                    "confidence": conf,
+                    "evidence": str(p.get("evidence", "")),
+                })
+        result["patterns"] = validated_patterns
 
     return result
 

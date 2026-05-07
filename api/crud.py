@@ -75,7 +75,7 @@ def create_function(db: Session, file_id: int, name: str, signature: str, start_
 def create_class(db: Session, file_id: int, name: str, start_line: int, end_line: int, docstring: str,
                  explanation_simple: str = None, explanation_architecture: str = None,
                  code_snippet: str = None,
-                 ai_purpose: str = None, ai_interfaces: list = None,
+                 ai_purpose: str = None, ai_interfaces: list = None, ai_patterns: list = None,
                  base_classes: list = None, interfaces: list = None) -> models.Class:
     cls = models.Class(
         file_id=file_id,
@@ -88,6 +88,7 @@ def create_class(db: Session, file_id: int, name: str, start_line: int, end_line
         code_snippet=code_snippet,
         ai_purpose=ai_purpose,
         ai_interfaces=ai_interfaces,
+        ai_patterns=ai_patterns,
         base_classes=base_classes,
         interfaces=interfaces,
     )
