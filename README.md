@@ -5,8 +5,26 @@
 
 ---
 
+## What Problem Does This Solve
+
+Grep finds text. Code Analyzer finds **meaning**.
+
+When an LLM writes code, it needs to understand *what a function does, what it expects, what it returns, and what side effects it causes* — not just where the string "handleLogin" appears. Code Analyzer pre-compiles codebases into AI-consumable metadata so that Claude Code can search across 25+ projects, trace call graphs, and understand function semantics before making changes.
+
+**It is NOT a grep replacement.** For routine searches ("where is function X defined"), grep is faster. Code Analyzer is for four specific scenarios where grep falls short:
+
+| Scenario | Trigger | Tool |
+|----------|---------|------|
+| **A. Cross-project pattern search** | "How did we implement auth in other projects?" | `ai_search` → `get_ai_context` |
+| **B. Refactoring impact analysis** | "Who will break if I change this function?" | `get_impact` / `get_ai_neighborhood` |
+| **C. Unfamiliar project onboarding** | "How is this repo organized?" | `get_project_stats` → `get_module_graph` |
+| **D. Class hierarchy navigation** | "What inherits from this base class?" | `get_class_hierarchy` / `get_subclasses` |
+
+---
+
 ## 📋 Table of Contents
 
+- [What Problem Does This Solve](#what-problem-does-this-solve)
 - [🎯 Claude Code Integration](#-claude-code-integration)
 - [💻 Terminal CLI](#-terminal-cli)
 - [🌐 Web API](#-web-api)
@@ -28,7 +46,7 @@
 
 ## 🎯 Claude Code Integration
 
-Register the MCP server, then search analyzed code directly from any Claude Code conversation:
+Register the MCP server in `~/.claude.json`:
 
 ```json
 {
@@ -42,49 +60,57 @@ Register the MCP server, then search analyzed code directly from any Claude Code
 }
 ```
 
-Once configured, Claude Code gains **14 code search tools** automatically:
+Once configured, add trigger rules to your project's `CLAUDE.md` so Claude Code knows when to use it. Do NOT use it as a blanket grep replacement. Use it in four specific scenarios:
 
-### Search Tools
-
-| Tool | Say this in Claude | Returns |
-|------|--------------------|---------|
-| `ai_search` | "Find all rate limiting related functions" | Structured metadata: purpose, inputs, outputs, side_effects |
-| `search_code` | "Search for authentication implementation" | Code snippets + explanations + call graph stats |
-| `search_classes` | "Find data model class definitions" | Class definitions + AI explanations |
-| `search_grouped` | "Show all database queries grouped by file" | Results grouped by file/project |
-| `get_reference` | "Give me a JWT auth code example" | Compact code snippets |
-
-### Function Analysis Tools
-
-| Tool | Say this in Claude | Returns |
-|------|--------------------|---------|
-| `get_ai_context` | "How do I call function 42?" | Purpose, input types, return values, side effects |
-| `get_function_detail` | "Show full details for function 42" | Full profile: file path, project, related functions |
-| `get_context` | "Who calls function 42? What does it call?" | Callers list + callees list + code preview |
-| `get_ai_neighborhood` | "Where does function 42 fit in the call graph?" | Graph: nodes (signature/purpose) + edges |
-| `get_impact` | "What would be affected if I modify function 42?" | BFS traversal of upstream/downstream chain |
-| `get_file_functions` | "Show all functions in app.py" | All functions in file + signatures + explanations |
-| `get_project_stats` | "How many projects are in the database?" | Project stats: files, functions, coverage |
-
-### Typical Workflow
+### Scenario A: Cross-project pattern search
+When implementing a feature that likely exists in another indexed project.
 
 ```
-You: "Find user authentication related functions"
-  → Claude calls ai_search({query: "user authentication"})
-  → Returns 10 matching functions with structured metadata
-
-You: "Explain how to call function 42"
-  → Claude calls get_ai_context({function_id: 42})
-  → Returns input types, return values, side effects, call graph stats
-
-You: "Who would be affected if I modify this function?"
-  → Claude calls get_impact({function_id: 42, depth: 3, direction: "upstream"})
-  → Returns all upstream callers (who is using it)
-
-You: "Show me how this function fits into the project before I refactor"
-  → Claude calls get_ai_neighborhood({function_id: 42, depth: 1})
-  → Returns function + immediate call graph neighbors
+Claude calls: ai_search → get_ai_context (if match found)
 ```
+
+### Scenario B: Refactoring impact analysis
+Before modifying a function that may be called elsewhere.
+
+```
+Claude calls: get_ai_neighborhood → get_impact
+```
+
+### Scenario C: Unfamiliar project onboarding
+When starting work in a repo you haven't explored.
+
+```
+Claude calls: get_project_stats → get_module_graph
+```
+
+### Scenario D: Class inheritance
+When dealing with class hierarchies.
+
+```
+Claude calls: get_class_hierarchy → get_subclasses
+```
+
+### Full Tool Reference
+
+| Tool | Purpose |
+|------|---------|
+| `ai_search` | Cross-project semantic search with structured metadata |
+| `get_ai_context` | Ultra-compact function context for calling conventions |
+| `get_ai_neighborhood` | Function + immediate call graph neighbors |
+| `get_impact` | BFS traversal: upstream (who calls me) or downstream (what I depend on) |
+| `get_module_graph` | Module-level dependency topology |
+| `get_project_stats` | Aggregate stats for all indexed projects |
+| `get_class_hierarchy` | Full inheritance chain (parents, children, interfaces) |
+| `get_subclasses` | Find all classes extending a given parent |
+| `get_file_dependencies` | Import dependencies for a file |
+| `get_file_importers` | Files that import from a given file |
+| `search_code` | Full search with explanations and code snippets |
+| `search_classes` | Class search with architecture pattern filters |
+| `search_grouped` | Search results grouped by file or project |
+| `get_reference` | Compact code reference for AI consumption |
+| `get_function_detail` | Full function profile |
+| `get_file_functions` | All functions in a file |
+| `get_context` | Callers + callees list |
 
 ---
 
